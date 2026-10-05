@@ -60,10 +60,17 @@ module AlaLint
         case s
         when Prism::CallNode then (ROUTING.include?(s.name) && s.receiver.nil?) || s.name.to_s.match?(/_(path|url)\z/) || (s.receiver.nil? && s.name == :screen)
         when Prism::ReturnNode then s.arguments.nil? || s.arguments.arguments.all? { routing_statement?(_1) }
-        when Prism::InstanceVariableWriteNode then s.value.is_a?(Prism::CallNode) && s.value.arguments.nil? || s.value.is_a?(Prism::ConstantPathNode) || s.value.is_a?(Prism::ConstantReadNode)
+        when Prism::InstanceVariableWriteNode then landing_value?(s.value)
         when Prism::NilNode then true
         else false
         end
+      end
+
+      # A view field set to a landed value, a constant, a parameter or a literal: handing the view
+      # what to show, not computing.
+      def landing_value?(v)
+        (v.is_a?(Prism::CallNode) && v.arguments.nil?) || v.is_a?(Prism::ConstantPathNode) || v.is_a?(Prism::ConstantReadNode) ||
+          v.is_a?(Prism::LocalVariableReadNode) || v.is_a?(Prism::StringNode) || v.is_a?(Prism::SymbolNode)
       end
 
       # One lower abstraction's result bound to a local and passed to another, or passed straight in

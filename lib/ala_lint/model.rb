@@ -38,6 +38,9 @@ module AlaLint
     end
 
     def record?(unit) = data_type?(unit) && unit.data_type == :record
+    # A value type with operations of its own is an abstraction both ends depend on (a Money); one
+    # that is only fields is a DTO two readers share the meaning of (R10).
+    def behaviour_type?(unit) = unit.data_type == :value && unit.methods.any? { !_1.singleton || _1.name != :new }
     def framework_subclass?(unit)
       return true if unit.superclass.to_s.match?(FRAMEWORK_BASES) || unit.superclass.to_s.match?(/::(Base|Test|TestCase)\z/)
       base = unit.superclass && @by_name[resolve_name(unit.superclass, unit)]
@@ -57,7 +60,10 @@ module AlaLint
     end
 
     def helper_methods
-      @helper_methods ||= @units.select { _1.name.end_with?("Helper") }.flat_map { |u| u.methods.map { [_1.name, u.name] } }.to_h
+      @helper_methods ||= begin
+        declared = @units.flat_map { |u| u.macros.select { _1.name == :helper }.flat_map { |m| m.args.filter_map { |a| a.is_a?(Prism::ConstantReadNode) || a.is_a?(Prism::ConstantPathNode) ? resolve_name(a.full_name, u) : nil } } }
+        @units.select { _1.name.end_with?("Helper") || declared.include?(_1.name) }.flat_map { |u| u.methods.map { [_1.name, u.name] } }.to_h
+      end
     end
 
     # Edges between units: [from_unit, to_unit, ref]. Same-unit refs and unresolved ones never appear.

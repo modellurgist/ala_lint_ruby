@@ -10,7 +10,7 @@ module AlaLint
                 after_commit after_save before_save after_create before_create after_update before_update
                 after_destroy before_destroy after_initialize after_find
                 include extend prepend attr_reader attr_accessor attr_writer delegate
-                output input helper_method queue_as broadcasts_to broadcasts].freeze
+                output input helper helper_method queue_as broadcasts_to broadcasts].freeze
     VISIBILITY = %i[private protected public module_function private_class_method].freeze
 
     def self.parse(file, root, source: nil)

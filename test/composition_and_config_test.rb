@@ -13,6 +13,9 @@ class CompositionTest < Minitest::Test
         return redirect_to cart_success_path if screen.step == :complete
         @s = screen
       end
+      def saved_or_form(path, title)
+        if screen.saved then redirect_to path else @form = screen.form; @title = title; render :again end
+      end
       def total
         lines = @cart.lines
         @sum = Pricing.sum(lines) + 5
@@ -31,6 +34,7 @@ class CompositionTest < Minitest::Test
     r = lint("app/carts_controller.rb" => CONTROLLER, "domain/pricing.rb" => "class Pricing; def self.sum(l); end; end\n", "domain/totals.rb" => "class Totals; def initialize(l); end; end\n")
     refute_finding r, :r11, /#destroy branches/
     refute_finding r, :r11, /#show/
+    refute_finding r, :r11, /#saved_or_form/
     refute_finding r, :r11, /#destroy.*hands|#destroy.*passes/
     assert_finding r, :r11, /#total hands lines \(one abstraction's result\) to sum/
     assert_finding r, :r11, /#total computes \(\+\)/

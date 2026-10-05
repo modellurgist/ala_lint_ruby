@@ -40,9 +40,10 @@ module AlaLint
 
       # A composition builds and wires; a field it reassigns after construction is state it holds
       # between steps. Landing an output into a field inside a wiring block is one allowed form; a
-      # controller handing the view a constant or a landed value (`@s = screen`) is the framework's.
+      # controller handing the view a constant, a parameter or a landed value (`@s = screen`) is the
+      # framework's.
       def composition_fields(u)
-        landing = %i[new const call_noargs]
+        landing = %i[new const call_noargs local literal]
         framework = model.framework_subclass?(u)
         u.methods.reject { _1.name == :initialize || _1.singleton }.each do |m|
           m.ivar_writes.each do |w|

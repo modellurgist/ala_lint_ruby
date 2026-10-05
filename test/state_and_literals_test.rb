@@ -19,13 +19,13 @@ class StateTest < Minitest::Test
   def test_composition_fields_after_construction_and_the_landing_exemptions
     r = lint(
       "app/screen.rb" => "class Screen\n  def initialize = @a.on(:rows) { @rows = _1 }\n  def step = @total = @cart.total\n  def memo = @cart ||= Cart.new\nend\n",
-      "app/pages_controller.rb" => "class PagesController < ApplicationController\n  def show\n    @s = screen\n    @t = Screen::TEXTS\n    @sum = @s.lines.sum\n  end\nend\n",
+      "app/pages_controller.rb" => "class PagesController < ApplicationController\n  def show(title)\n    @s = screen\n    @t = Screen::TEXTS\n    @title = title\n    @sum = @s.lines.sum\n  end\nend\n",
       "domain/cart.rb" => "class Cart; def total; end; end\n"
     )
     assert_finding r, :r4, /Screen#step assigns @total after construction/
     refute_finding r, :r4, /@rows/
     refute_finding r, :r4, /memo/
-    refute_finding r, :r4, /@s |@t /
+    refute_finding r, :r4, /@s |@t |@title/
     assert_finding r, :r4, /PagesController#show assigns @sum/
   end
 

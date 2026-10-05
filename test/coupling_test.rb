@@ -134,11 +134,14 @@ class DataTest < Minitest::Test
       "domain/cart.rb" => "class Cart; def x = Account.first; def m = Money.new(1); end\n",
       "domain/checkout.rb" => "class Checkout; def x = Account.last; def m = Money.new(2); end\n",
       "foundation/account.rb" => "class Account < ApplicationRecord; def x; end; end\n",
-      "foundation/money.rb" => "module Foundation; Money = Data.define(:cents); end\n"
+      "foundation/money.rb" => "module Foundation; Money = Data.define(:cents) { def +(o) = with(cents: cents + o.cents) }; end\n",
+      "foundation/row.rb" => "Row = Data.define(:name, :amount)\n",
+      "domain/wish.rb" => "class Wish; def x = Row.new(1, 2); def y = Account.first; end\n"
     }
     r = lint(files)
-    assert_finding r, :r10_aggregate, /Account \(foundation\) is read by Cart, Checkout/
+    assert_finding r, :r10_aggregate, /Account \(foundation\) is read by Cart, Checkout, Wish/
     refute_finding r, :r10_aggregate, /Money/
+    refute_finding r, :r10_aggregate, /Row/
     assert_equal "Foundation::Money", r.model.unit("Foundation::Money").name
     refute r.scored.any? { _1.check == :r10_aggregate }
     assert lint(files, tier: :strict).scored.any? { _1.check == :r10_aggregate }
@@ -171,5 +174,20 @@ class ResolutionTest < Minitest::Test
     refute_finding r, :r1, /Later/
     assert_finding r, :r1, /User#t references Screens::Checkout .*flows UP/
     assert_equal 1, messages(r, :r1).grep(/User/).size
+  end
+end
+
+class HelperDeclarationTest < Minitest::Test
+  include LintHelper
+
+  def test_a_module_declared_with_helper_is_a_helper_unit
+    r = lint(
+      "app/application_controller.rb" => "class ApplicationController < ActionController::Base\n  helper Foundation::DomTargets\nend\n",
+      "app/views/components/_row.html.erb" => "<div id=\"<%= row_id(1) %>\"></div>\n",
+      "foundation/dom_targets.rb" => "module Foundation\n  module DomTargets\n    def row_id(i) = \"row_\#{i}\"\n  end\nend\n",
+      layers: [{ name: :application, paths: [%r{\Aapp/(?!views/components)}] }, { name: :domain, paths: [%r{\Aapp/views/components/}] }, { name: :foundation, paths: [%r{\Afoundation/}] }]
+    )
+    assert r.model.edges.any? { |from, to, ref| from.name.end_with?("_row") && to.name == "Foundation::DomTargets" && ref.kind == :helper }
+    refute_finding r, :r1
   end
 end

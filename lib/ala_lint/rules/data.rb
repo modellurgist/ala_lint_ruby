@@ -20,7 +20,7 @@ module AlaLint
             names = group.map(&:name).join(", ")
             if type.layer && type.layer.index == layer.index
               flag(:r10, type, type.line, "#{type.name} is read by #{names}, peers in #{layer.name}: two features knowing the meaning of the same data (R10, §6.17.2); share an identity key and keep data private")
-            elsif type.layer && type.layer.index > layer.index && type.data_type == :record
+            elsif type.layer && type.layer.index > layer.index && !model.behaviour_type?(type)
               flag(:r10_aggregate, type, type.line, "#{type.name} (#{type.layer.name}) is read by #{names} in #{layer.name}: a shared aggregate (ground symbol, §3.6.1) or Spray's shared entity (§6.17.2)? Send each consumer only the data it needs")
             end
           end
