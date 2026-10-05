@@ -1,0 +1,5 @@
+#!/usr/bin/env ruby
+require_relative "../lib/ala_lint"
+require_relative "../lib/ala_lint/cli"
+
+exit AlaLint::CLI.run(ARGV)
