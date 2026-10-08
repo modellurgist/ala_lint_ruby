@@ -134,3 +134,19 @@ class ContractsTest < Minitest::Test
     assert_finding r, :r5, /calls a method by a name built from a string/
   end
 end
+
+class InherentTextTest < Minitest::Test
+  include LintHelper
+
+  def test_words_under_an_inherent_constant_or_ivar_are_the_abstractions_own
+    r = lint(
+      "domain/badge.rb" => "class Badge\n  INHERENT_LABELS = { low: \"Only a few left!\", out: \"Out of stock\" }.freeze\n  LABELS = { empty: \"Your cart is empty.\" }.freeze\n  def self.words = @inherent_words ||= [ \"Next page\" ]\n  def say = \"Promo applied!\"\nend\n"
+    )
+    r3 = messages(r, :r3)
+    refute r3.any? { _1.match?(/Only a few|Out of stock|Next page/) }, r3.join("\n")
+    assert r3.any? { _1.match?(/Your cart is empty/) }
+    assert r3.any? { _1.match?(/Promo applied/) }
+    assert_includes r.accepted_listing, "domain/badge.rb:2  Badge::INHERENT_LABELS"
+    assert_includes r.accepted_listing, "Badge::@inherent_words"
+  end
+end

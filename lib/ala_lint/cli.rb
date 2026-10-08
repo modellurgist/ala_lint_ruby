@@ -20,7 +20,17 @@ module AlaLint
         --limit N            show up to N findings per list (default 40)
         --format text|json   output format (default text)
         --list-checks        print every check with its tier and threshold, then exit
+        --list-accepted      print every INHERENT_ declaration and every `ala:accept` comment, what
+                             it covers, and the stale ones, then exit
         --help, -h           show this help
+
+      Accepting a finding by hand, where the tool can't tell (a domain's own word, routing):
+        # ala:accept r3                       the next line, for check r3
+        # ala:accept r3,r5 lines=3 -- why     the next three lines, for two checks, with the reason
+        <%# ala:accept r11 -- why %>          the same in ERB
+      Accepted findings leave the score and are counted in the report. Words a lower abstraction
+      owns as its domain's vocabulary are declared, not accepted: a constant named INHERENT_...
+      (or a class-level @inherent_...) holds them, and R3 reads nothing inside it as product text.
 
       Per-check overrides:
         --enforce CHECK      promote one check to scored (repeatable)
@@ -41,6 +51,7 @@ module AlaLint
         o.on("--limit N", Integer) { opts[:limit] = _1 }
         o.on("--format F") { opts[:format] = _1.to_sym }
         o.on("--list-checks") { opts[:list] = true }
+        o.on("--list-accepted") { opts[:list_accepted] = true }
         o.on("--enforce CHECK") { opts[:enforce] << _1 }
         o.on("--disable CHECK") { opts[:disable] << _1 }
         o.on("--set KV") { k, v = _1.split("=", 2); opts[:set][k] = v.include?(".") ? v.to_f : v.to_i }
@@ -59,7 +70,8 @@ module AlaLint
       opts[:set].each_key { |k| Checks.fetch(k.split(".").first) }
 
       root = File.expand_path(opts[:root] || ".")
-      report = AlaLint.analyze(root, **opts.except(:root, :list, :help))
+      report = AlaLint.analyze(root, **opts.except(:root, :list, :list_accepted, :help))
+      return (out.puts(report.accepted_listing); 0) if opts[:list_accepted]
       out.puts(report.model.config.format == :json ? report.to_json : report.to_text)
       return 1 unless report.passes_min_score?
       return 1 unless report.requires_layers_ok?

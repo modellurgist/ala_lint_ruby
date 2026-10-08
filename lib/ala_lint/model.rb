@@ -5,11 +5,12 @@ module AlaLint
   class Model
     FRAMEWORK_BASES = /\A(ApplicationRecord|ActiveRecord::Base|ApplicationController|ActionController::\w+|ApplicationJob|ActiveJob::Base|ApplicationMailer|ApplicationCable::\w+|Minitest::Test|ActiveSupport::TestCase|ActionDispatch::IntegrationTest|Rails::Application|Rails::Railtie|StandardError|RuntimeError|Struct|Data)\z/
 
-    attr_reader :units, :config, :layers, :edges, :root
+    attr_reader :units, :config, :layers, :edges, :root, :acceptances
 
     def initialize(config)
       @config = config
       @root = config.root
+      @acceptances = []
       @units = load_units
       @by_name = @units.to_h { [_1.name, _1] }
       @layers = config.layered? ? Layers.new(config.layers) : nil
@@ -77,7 +78,10 @@ module AlaLint
       files = config.paths.flat_map { |p| File.directory?(p) ? Dir.glob(File.join(p, "**", "*.{rb,erb}")) : [p] }
       files = files.select { File.file?(_1) }.reject { |f| config.exclude.any? { _1.match?(f) } }.sort
       files.flat_map do |f|
+        @acceptances.concat(Acceptance.scan(File.read(f), relative(f)))
         f.end_with?(".erb") ? [Templates.parse(f, @root)] : Parser.parse(f, @root)
+      rescue ArgumentError
+        raise
       rescue StandardError => e
         warn "ala_lint: skipping #{relative(f)} (#{e.class}: #{e.message})"
         []

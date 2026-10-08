@@ -37,7 +37,7 @@ module AlaLint
 
       def words(u)
         u.strings.each do |s|
-          next if SKIP_CONTEXTS.include?(s.context) || logged?(u, s.line)
+          next if SKIP_CONTEXTS.include?(s.context) || logged?(u, s.line) || s.inherent
           if s.context == :key_message
             flag(:r3, u, s.line, "validation message #{s.value.inspect} in #{u.name}: a form's words belong to the composition (R3); pass messages as configuration or use I18n keys the composition owns")
           elsif CODE_KEYS.include?(s.context)

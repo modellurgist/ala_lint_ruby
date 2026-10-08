@@ -7,7 +7,7 @@ module AlaLint
       :name, :file, :line, :end_line, :kind, :loc, :superclass, :includes, :extends, :prepends,
       :methods, :constants, :refs, :calls, :literals, :strings, :ivar_writes, :cvars, :gvars,
       :header_comment, :tag, :outputs, :inputs, :macros, :symbols, :texts, :attr_readers, :data_type,
-      :branches, :arith, :loops, :layer, :body_nodes, :lambda_ivar_writes,
+      :branches, :arith, :loops, :layer, :body_nodes, :lambda_ivar_writes, :inherent_declarations,
       keyword_init: true
     ) do
       def template? = kind == :template
@@ -29,7 +29,7 @@ module AlaLint
     Call = Struct.new(:receiver_kind, :receiver_name, :resolved, :name, :args, :line, :method, :block, :node, :arg_shapes, keyword_init: true)
 
     Literal = Struct.new(:value, :line, :method, :context, keyword_init: true)
-    Str = Struct.new(:value, :line, :method, :context, :interpolated, :words, keyword_init: true)
+    Str = Struct.new(:value, :line, :method, :context, :interpolated, :words, :inherent, keyword_init: true)
     IvarWrite = Struct.new(:name, :line, :method, :in_block, :operator, :value_kind, keyword_init: true)
     Macro = Struct.new(:name, :args, :line, :block, keyword_init: true)
   end

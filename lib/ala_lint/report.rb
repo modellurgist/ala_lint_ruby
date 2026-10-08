@@ -8,10 +8,11 @@ module AlaLint
                    r4: "R4 hidden state", r5: "R5 silent contracts", r6: "R6 nameability", r7: "R7 unearned abstractions",
                    r9: "R9 owned interfaces / endpoints", r10: "R10 shared entity", r11: "R11 logic in the composition" }.freeze
 
-    attr_reader :model, :findings, :scored, :advisory
+    attr_reader :model, :findings, :scored, :advisory, :accepted
 
-    def initialize(model, findings)
+    def initialize(model, findings, accepted = [])
       @model = model
+      @accepted = accepted
       @config = model.config
       @findings = findings.sort_by { [-weight(_1), _1.check.to_s, _1.file, _1.line] }
       @scored, @advisory = @findings.partition { @config.scored?(_1.check) }
@@ -59,8 +60,34 @@ module AlaLint
     def passes_min_score? = @config.min_score.nil? || score >= @config.min_score
     def requires_layers_ok? = !@config.require_layers || coverage.nil? || coverage[:unassigned].empty?
 
+    def acceptances = model.acceptances
+    def acceptance_for(finding) = acceptances.find { _1.covers?(finding) }
+    def unused_acceptances = acceptances.reject { |a| @accepted.any? { a.covers?(_1) } }
+
+    # Every reviewer's acceptance, what it covers, and the ones that cover nothing (stale, or a check
+    # that no longer fires there).
+    def inherent_declarations = model.units.flat_map { |u| u.inherent_declarations.map { |name, line| [u, name, line] } }
+
+    def accepted_listing
+      out = +""
+      unless inherent_declarations.empty?
+        out << "Inherent text declared (#{inherent_declarations.size}; R3's domain-vocabulary exception, the words are the abstraction's own):\n"
+        inherent_declarations.each { |u, name, line| out << "  #{model.relative(u.file)}:#{line}  #{u.name}::#{name}\n" }
+      end
+      return out + "No ala:accept comments.\n" if acceptances.empty?
+      out << "Accepted by hand (#{@accepted.size} finding(s) under #{acceptances.size} comment(s)):\n"
+      acceptances.each do |a|
+        covered = @accepted.select { a.covers?(_1) }
+        out << "  #{a.file}:#{a.line}  #{a.checks.join(',')}  lines #{a.range}#{a.reason.empty? ? '' : "  -- #{a.reason}"}\n"
+        covered.each { out << "      ↳ [#{_1.check}] line #{_1.line}: #{_1.message}\n" }
+        out << "      ↳ covers nothing: stale, or the check no longer fires here\n" if covered.empty?
+      end
+      out
+    end
+
     def to_h
-      { score: score, grade: grade, breadth: breadth, breadth_grade: grade(breadth), weighted: weighted, functions: functions, loc: loc,
+      { score: score, accepted: @accepted.map { |f| f.to_h.merge(accepted_by: acceptance_for(f).to_h) },
+        acceptances: acceptances.map(&:to_h), grade: grade, breadth: breadth, breadth_grade: grade(breadth), weighted: weighted, functions: functions, loc: loc,
         units: model.units.size, rules: rules, coverage: coverage, by_check: by_check, params: @config.params,
         findings: @findings.map { _1.to_h.merge(scored: @config.scored?(_1.check), weight: weight(_1)) } }
     end
@@ -81,6 +108,7 @@ module AlaLint
       out << "Checklist rules met: #{met} of #{checked} checked (11 in the checklist; R8 is judgement)\n"
       out << "  with no finding at all, advisory included: #{strictly} of #{checked}\n"
       out << "  — a count, not a density: one finding in a large codebase still leaves its rule unmet.\n"
+      out << "Accepted by hand: #{@accepted.size} finding(s) under #{acceptances.size} ala:accept comment(s)#{unused_acceptances.empty? ? '' : ", #{unused_acceptances.size} covering nothing"}; --list-accepted prints them\n" unless acceptances.empty?
       out << "  " << r.map { |k, v| "#{k.to_s.upcase} #{v[:state] == :met ? 'met' : v[:state] == :not_met ? "NOT met (#{v[:scored]})" : 'unchecked'}" }.join("  ") << "\n\n"
       out << "Degree of function compliance: #{score}/100  (grade #{grade})\n"
       out << "  — 100 minus the weighted-violation load per 100 functions; a few dense units can drag it.\n"

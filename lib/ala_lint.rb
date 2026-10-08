@@ -1,5 +1,6 @@
 require "set"
 require_relative "ala_lint/finding"
+require_relative "ala_lint/acceptance"
 require_relative "ala_lint/checks"
 require_relative "ala_lint/config"
 require_relative "ala_lint/source"
@@ -17,7 +18,7 @@ module AlaLint
   def self.analyze(root, **opts)
     config = root.is_a?(Config) ? root : Config.load(root, opts)
     model = Model.new(config)
-    findings = Rules.run(model)
-    Report.new(model, findings)
+    accepted, findings = Rules.run(model).partition { |f| model.acceptances.any? { _1.covers?(f) } }
+    Report.new(model, findings, accepted)
   end
 end

@@ -21,6 +21,7 @@ module AlaLint
       @file = file
       @root = root
       @units = []
+      @inherent = 0
       @source = source || File.read(file)
       @result = Prism.parse(@source)
       @comments = @result.comments
@@ -84,7 +85,7 @@ module AlaLint
         name: name, file: @file, line: line, end_line: end_line, kind: kind, loc: 0, includes: [], extends: [], prepends: [],
         methods: [], constants: {}, refs: [], calls: [], literals: [], strings: [], ivar_writes: [], cvars: [], gvars: [],
         header_comment: "", tag: nil, outputs: {}, inputs: {}, macros: [], symbols: [], texts: [], attr_readers: [],
-        data_type: nil, branches: [], arith: [], loops: [], layer: nil, body_nodes: [], lambda_ivar_writes: []
+        data_type: nil, branches: [], arith: [], loops: [], layer: nil, body_nodes: [], lambda_ivar_writes: [], inherent_declarations: []
       ).tap { _1.instance_variable_set(:@nesting, nesting) }
     end
 
@@ -176,7 +177,7 @@ module AlaLint
         return
       when Prism::ConstantWriteNode
         unit.constants[node.name.to_s] = line
-        visit(node.value, unit, method, nesting, singleton, in_block)
+        visit_declared_value(node.name.to_s, node.value, unit, method, nesting, singleton, in_block, line)
         return
       when Prism::CallNode
         visit_call(node, unit, method, nesting, singleton, in_block)
@@ -201,7 +202,7 @@ module AlaLint
                                   value_kind: value_kind(node.value))
         (method ? method.ivar_writes : unit.ivar_writes) << w
         unit.ivar_writes << w if method
-        visit(node.value, unit, method, nesting, singleton, in_block)
+        visit_declared_value(node.name.to_s, node.value, unit, method, nesting, singleton, in_block, line)
         return
       when Prism::ClassVariableWriteNode, Prism::ClassVariableReadNode, Prism::ClassVariableOrWriteNode, Prism::ClassVariableOperatorWriteNode
         unit.cvars << [node.name, line, method&.name]
@@ -351,9 +352,22 @@ module AlaLint
       end
     end
 
+    # A value declared under `INHERENT_...` (or `@inherent_...`) is the reviewer saying its words are
+    # the abstraction's own domain vocabulary, not this product's: R3's domain-vocabulary exception.
+    INHERENT = /\A(INHERENT_|@inherent_)/
+
+    def visit_declared_value(name, value, unit, method, nesting, singleton, in_block, line)
+      return visit(value, unit, method, nesting, singleton, in_block) unless INHERENT.match?(name)
+      unit.inherent_declarations << [name, line]
+      @inherent += 1
+      visit(value, unit, method, nesting, singleton, in_block)
+    ensure
+      @inherent -= 1 if INHERENT.match?(name)
+    end
+
     def add_string(unit, text, line, method, interpolated)
       unit.strings << Source::Str.new(value: text, line: line, method: method&.name, context: @literal_context, interpolated: interpolated,
-                                      words: text.scan(/[A-Za-z][a-z']+/))
+                                      words: text.scan(/[A-Za-z][a-z']+/), inherent: @inherent.positive?)
     end
 
     def add_ref(unit, name, kind, line, method)

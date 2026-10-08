@@ -69,6 +69,44 @@ A check's setting is a level (`:off`, `:advisory`, `:scored`) or a hash with a `
 thresholds. The CLI flags override the file for one run, and a run that disabled or downgraded a
 check says so in its parameter echo.
 
+## Accepting a finding by hand (`ala:accept`)
+
+Several checks turn on a judgement the tool can't make: whether a word below the composition is the
+product's (hoist it) or the abstraction's domain's own (keep it; the checklist's R3 exception), whether
+a controller branch is routing or logic, whether a shared type is a ground symbol. A comment on the
+line above records the reviewer's call where the code is, names the exact check, and takes that line
+(or the next N lines) out of the score for that check only:
+
+```ruby
+# ala:accept r3 -- "Out of stock" is retail's word, not this store's (R3, domain vocabulary)
+def label = "Out of stock"
+
+# ala:accept r3,r6 lines=2 -- two checks, the next two lines
+```
+
+```erb
+<%# ala:accept r11 -- the one loop this page keeps, until a rows component exists %>
+<% rows.each do |row| %>...<% end %>
+```
+
+For words, there is a declaration instead of a comment. A lower abstraction that owns some
+vocabulary (a retail stock badge's "Out of stock", a pager's "Next") keeps it in a constant named
+`INHERENT_...` (or a class-level `@inherent_...`), and R3 reads nothing inside that value as product
+text; the declaration says the reviewer judged the words the abstraction's own, per the checklist's
+domain-vocabulary exception. `--list-accepted` lists these declarations too.
+
+```ruby
+class StockBadge
+  INHERENT_LABELS = { in_stock: "In stock", low_stock: "Only %{n} left!", out_of_stock: "Out of stock" }.freeze
+end
+```
+
+The check names are the ones `--list-checks` prints; an unknown one fails the run. Accepted findings
+leave the score and the rules-met count, and the report says how many were accepted and under how
+many comments. `--list-accepted` prints every comment with the findings it covers, and marks the
+ones that cover nothing, which is how a stale acceptance shows up after the code moved. The JSON
+output carries them as `accepted` and `acceptances`.
+
 ## What a unit is
 
 The checklist's encoding is function-centric and its OO reading makes the class the natural unit.

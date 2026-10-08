@@ -143,3 +143,47 @@ class ConfigAndReportTest < Minitest::Test
     end
   end
 end
+
+class AcceptanceTest < Minitest::Test
+  include LintHelper
+
+  SRC = "class Badge\n  # ala:accept r3 -- retail's own word, kept (checklist R3, domain vocabulary)\n  def label = \"Out of stock\"\n  def other = \"Low stock today\"\n  # ala:accept r3,r6 lines=2\n  def f1 = 42\n  def f2 = 43\n  # ala:accept r5 -- nothing here fires r5\n  def quiet = 1\nend\n"
+
+  def test_accepted_findings_leave_the_score_and_are_listed
+    r = lint("domain/badge.rb" => SRC)
+    assert_equal 5, r.accepted.size
+    assert_equal 1, findings(r, :r3).size
+    assert_match(/Low stock today/, messages(r, :r3).first)
+    assert_equal 3, r.acceptances.size
+    assert_equal 1, r.unused_acceptances.size
+    assert_includes r.to_text, "Accepted by hand: 5 finding(s) under 3 ala:accept comment(s), 1 covering nothing"
+    listing = r.accepted_listing
+    assert_includes listing, "domain/badge.rb:2  r3  lines 3  -- retail's own word"
+    assert_includes listing, "↳ [r3] line 3"
+    assert_includes listing, "domain/badge.rb:5  r3,r6  lines 6–7"
+    assert_includes listing, "covers nothing"
+    assert_equal 5, JSON.parse(r.to_json)["accepted"].size
+  end
+
+  def test_an_erb_acceptance_and_an_unknown_check
+    r = lint(
+      "app/views/pages/show.html.erb" => "<%# ala:accept r11 -- the one loop this page keeps %>\n<% rows.each do |r| %><%= r %><% end %>\n",
+      layers: [{ name: :application, paths: [%r{\Aapp/views/}] }]
+    )
+    assert_equal 1, r.accepted.size
+    assert_empty findings(r, :r11)
+    err = assert_raises(ArgumentError) { lint("domain/a.rb" => "# ala:accept nope\nclass A; def x = 5; end\n") }
+    assert_match(/a\.rb:1: ala:accept names no such check: nope/, err.message)
+  end
+
+  def test_list_accepted_from_the_cli
+    Dir.mktmpdir do |dir|
+      FileUtils.mkdir_p(File.join(dir, "domain"))
+      File.write(File.join(dir, "domain/badge.rb"), SRC)
+      File.write(File.join(dir, ".ala_lint.rb"), "{ layers: #{LintHelper::LAYERS.inspect}, paths: %w[domain] }")
+      out = StringIO.new
+      assert_equal 0, AlaLint::CLI.run(["--root", dir, "--list-accepted"], out: out)
+      assert_includes out.string, "Accepted by hand (5 finding(s) under 3 comment(s))"
+    end
+  end
+end
