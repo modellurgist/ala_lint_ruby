@@ -92,11 +92,14 @@ module AlaLint
         end
       end
 
+      # A result passed straight on is handled data; a no-argument read of a name on a constant or a
+      # local (`Store::RATES`, `dom.summary_id`) is configuration being passed, which is wiring.
       def handed_call?(node)
         return false if node.name == :new || EDGE.include?(node.name) || WIRING.include?(node.name) || node.name.to_s.match?(/_(path|url)\z/)
         return false if node.receiver.nil? || node.receiver.is_a?(Prism::CallNode) && EDGE.include?(node.receiver.name)
         recv = node.receiver
-        recv.is_a?(Prism::InstanceVariableReadNode) || recv.is_a?(Prism::LocalVariableReadNode) || recv.is_a?(Prism::ConstantReadNode) || recv.is_a?(Prism::ConstantPathNode)
+        return true if recv.is_a?(Prism::InstanceVariableReadNode)
+        (recv.is_a?(Prism::LocalVariableReadNode) || recv.is_a?(Prism::ConstantReadNode) || recv.is_a?(Prism::ConstantPathNode)) && !node.arguments.nil?
       end
 
       def template(u)

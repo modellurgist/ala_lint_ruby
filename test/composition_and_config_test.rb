@@ -21,6 +21,7 @@ class CompositionTest < Minitest::Test
         @sum = Pricing.sum(lines) + 5
         @cart.lines.each { }
         @totals.price(@cart.lines)
+        @sink = Patch.new(target: Names.summary_id)
         @w.on(:x) { |v| v > 1 ? a : b }
         Totals.new(@cart.lines)
       end
@@ -41,6 +42,7 @@ class CompositionTest < Minitest::Test
     assert_finding r, :r11, /#total iterates \(each\)/
     assert_finding r, :r11, /#total passes @cart.lines straight into price/
     refute_finding r, :r11, /straight into new/
+    refute_finding r, :r11, /Names.summary_id/
     assert_finding r, :r11, /#total branches \(if\) \(inside a wiring block\)/
     assert_finding r, :r11, /#rule branches \(if\)/
     assert_finding r, :r11_share, /composition functions hold logic/
