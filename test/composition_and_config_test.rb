@@ -189,3 +189,55 @@ class AcceptanceTest < Minitest::Test
     end
   end
 end
+
+class PlainWiringTest < Minitest::Test
+  include LintHelper
+
+  PLAIN = {
+    "app/screen.rb" => <<~RB,
+      module Screens
+        class Cart
+          include ProgrammingParadigms::Wiring
+          GROUNDED = [].freeze
+          attr_reader :rows, :summary
+          def load = run(:lines, @lines.load(@items.lookup))
+          def bump(change) = run(:lines, @lines.bump(change))
+          def initialize = (@lines, @items, @totals = Domain::Lines.new, Domain::Items.new, Domain::Totals.new)
+
+          private
+
+          def wire(part, output, payload)
+            case [ part, output ]
+            in [ :lines, :changed ] then run(:items, @items.apply(payload))
+            in [ :lines, :rows ] then @rows = payload
+            in [ :lines, :contents ] then run(:totals, @totals.contents(payload))
+            in [ :totals, :summary ] then @summary = payload
+            end
+          end
+        end
+      end
+    RB
+    "domain/lines.rb" => "module Domain; class Lines; OUTPUTS = %i[changed rows contents].freeze; def load(items) = {}; def bump(c) = {}; end; end\n",
+    "domain/items.rb" => "module Domain; class Items; def lookup = []; def apply(c) = nil; end; end\n",
+    "domain/totals.rb" => "module Domain; class Totals; OUTPUTS = %i[summary].freeze; def contents(c) = {}; end; end\n",
+    "paradigms/wiring.rb" => "module ProgrammingParadigms; module Wiring; def run(part, outputs) = outputs&.each { |o, p| wire(part, o, p) }; end; end\n"
+  }.freeze
+
+  def test_a_wiring_table_lands_outputs_and_runs_parts_without_findings
+    report = lint(PLAIN)
+    refute_finding report, :r4, /assigns/
+    refute_finding report, :r11, /branches|passes|hands/
+  end
+
+  def test_a_handoff_outside_run_is_still_handled_data
+    files = PLAIN.merge("app/other.rb" => "module Screens; class Other; def go = @lines.load(@items.lookup); def initialize = (@lines, @items = Domain::Lines.new, Domain::Items.new); end; end\n")
+    report = lint(files)
+    assert_finding report, :r11, /go passes @items.lookup straight into load/
+  end
+
+  def test_a_case_in_any_other_method_is_still_a_branch
+    files = PLAIN.merge("app/other.rb" => "module Screens; class Other; def pick(x) = (case [ x, :a ] in [ 1, :a ] then 1 in [ 2, :a ] then 2 end); end; end\n")
+    report = lint(files)
+    assert_finding report, :r11, /pick branches/
+  end
+end

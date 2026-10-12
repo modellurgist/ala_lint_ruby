@@ -18,7 +18,7 @@ module AlaLint
     end
 
     Method = Struct.new(:name, :line, :end_line, :visibility, :singleton, :params, :keyword_defaults,
-                        :body, :reads, :calls, :refs, :unit, :ivar_writes, :simple_body, :branches, :arith, :loops, :handoffs,
+                        :body, :reads, :calls, :refs, :unit, :ivar_writes, :simple_body, :branches, :arith, :loops, :handoffs, :wiring_tables,
                         keyword_init: true)
 
     # A reference from one unit to a constant, with how it was used (call, new, superclass, mixin, const).

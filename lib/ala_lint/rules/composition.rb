@@ -1,12 +1,13 @@
 module AlaLint
   module Rules
     # R11: a composition layer holds instances, configuration and wiring. In its Ruby: branches
-    # (routing an outcome to a response is exempt), arithmetic, iteration, and handled data (one
-    # lower call's result passed into another). In its templates: branches, comparisons, arithmetic,
+    # (routing an outcome to a response is exempt, and so is a wiring table: `case [part, output]`
+    # in `wire`), arithmetic, iteration, and handled data (one lower call's result passed into
+    # another; a part's call fed to `run`, including a pull passed straight in, is a wire). In its templates: branches, comparisons, arithmetic,
     # loops, and calls into units below the composition. Plus the two never-scored shares.
     class Composition < Base
       ROUTING = %i[redirect_to render head respond_to format turbo_stream redirect_back_or_to].freeze
-      WIRING = %i[wire_to wire_in on input_port push send_event request call new tap then freeze].freeze
+      WIRING = %i[wire_to wire_in on input_port push send_event request call new tap then freeze run].freeze
       EDGE = %i[params expect permit require to_i to_s to_sym fetch dig [] presence].freeze
       EDGE_RECEIVERS = %w[session params flash cookies request response helpers].freeze
       COMPARISONS = %i[== != < > <= >= <=> include? === =~].freeze
@@ -80,7 +81,7 @@ module AlaLint
         handed = m.handoffs.map(&:first).to_set
         m.calls.each do |c|
           next if WIRING.include?(c.name) || ROUTING.include?(c.name) || c.name.to_s.match?(/_(path|url)\z/) || c.receiver_kind == :none && c.name == :screen
-          next if c.instance_variable_get(:@in_block)
+          next if c.instance_variable_get(:@in_block) || c.instance_variable_get(:@wired_arg)
           next if c.receiver_kind == :call && EDGE_RECEIVERS.include?(c.receiver_name)
           c.arg_shapes.each do |shape, value|
             if shape == :local && handed.include?(value)

@@ -138,7 +138,7 @@ module AlaLint
       m = Source::Method.new(
         name: node.name, line: node.location.start_line, end_line: node.location.end_line, visibility: visibility,
         singleton: singleton || !node.receiver.nil?, params: [], keyword_defaults: {}, body: node.body, reads: Hash.new(0),
-        calls: [], refs: [], unit: unit.name, ivar_writes: [], simple_body: nil, branches: [], arith: [], loops: [], handoffs: []
+        calls: [], refs: [], unit: unit.name, ivar_writes: [], simple_body: nil, branches: [], arith: [], loops: [], handoffs: [], wiring_tables: []
       )
       m.visibility = :public if m.singleton && visibility == :private && !@private_singleton
       if node.parameters
@@ -213,7 +213,10 @@ module AlaLint
         return
       when Prism::LocalVariableWriteNode
         method&.handoffs&.push([node.name, node.value, line]) if handed_value?(node.value)
-      when Prism::IfNode, Prism::UnlessNode, Prism::CaseNode, Prism::CaseMatchNode, Prism::WhileNode, Prism::UntilNode, Prism::AndNode, Prism::OrNode
+      when Prism::CaseMatchNode
+        return visit_wiring_table(node, unit, method, nesting, singleton) if wiring_table?(node, method)
+        (method ? method.branches : unit.branches) << [node, in_block]
+      when Prism::IfNode, Prism::UnlessNode, Prism::CaseNode, Prism::WhileNode, Prism::UntilNode, Prism::AndNode, Prism::OrNode
         (method ? method.branches : unit.branches) << [node, in_block]
       when Prism::BlockNode, Prism::LambdaNode
         in_block = true
@@ -228,6 +231,21 @@ module AlaLint
       node.compact_child_nodes.each { visit(_1, unit, method, nesting, singleton, in_block) }
     end
 
+    # The plain wiring shape: `wire(part, output, payload)` dispatching on `[part, output]` with symbol
+    # patterns. Each arm is a wire; what it lands or runs is wiring, not logic.
+    def wiring_table?(node, method)
+      method&.name == :wire && node.conditions.all? do |arm|
+        p = arm.pattern
+        p.is_a?(Prism::ArrayPatternNode) && p.requireds.size == 2 && p.requireds.all?(Prism::SymbolNode)
+      end
+    end
+
+    def visit_wiring_table(node, unit, method, nesting, singleton)
+      (method ? method.wiring_tables : unit.branches) << node
+      node.conditions.each { visit(_1.statements, unit, method, nesting, singleton, true) }
+      visit(node.else_clause, unit, method, nesting, singleton, true) if node.else_clause
+    end
+
     def visit_call(node, unit, method, nesting, singleton, in_block)
       line = node.location.start_line
       recv = node.receiver
@@ -237,6 +255,7 @@ module AlaLint
                               method: method&.name, block: node.block, node: node, arg_shapes: args.map { arg_shape(_1) })
       call.instance_variable_set(:@const, resolved_name)
       call.instance_variable_set(:@in_block, in_block)
+      call.instance_variable_set(:@wired_arg, @wired_arg)
       (method ? method.calls : unit.calls) << call
       unit.calls << call if method
 
@@ -251,7 +270,10 @@ module AlaLint
       previous = @literal_context
       @literal_context = :raise if recv.nil? && %i[raise warn fail].include?(node.name)
       @literal_context = :class_attr if args.first.is_a?(Prism::KeywordHashNode) && false
+      wired = @wired_arg
+      @wired_arg = true if recv.nil? && node.name == :run
       args.each { visit_arg(_1, unit, method, nesting, singleton, in_block, node) }
+      @wired_arg = wired
       @literal_context = previous
       visit(node.block, unit, method, nesting, singleton, in_block) if node.block
     end
