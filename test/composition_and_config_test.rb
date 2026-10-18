@@ -241,3 +241,39 @@ class PlainWiringTest < Minitest::Test
     assert_finding report, :r11, /pick branches/
   end
 end
+
+class PlainFeatureTest < Minitest::Test
+  include LintHelper
+
+  def test_a_feature_that_collects_and_sends_out_is_wiring
+    files = PlainWiringTest::PLAIN.merge("app/feature.rb" => <<~RB)
+      module Features
+        class Order
+          include ProgrammingParadigms::Wiring
+          GROUNDED = [].freeze
+          def bump(change) = collect { run(:lines, @lines.bump(change)) }
+          def initialize = (@lines, @undo = Domain::Lines.new, Domain::Lines.new)
+
+          private
+
+          def wire(part, output, payload)
+            case [ part, output ]
+            in [ :lines, :removed ] then run(:undo, @undo.bump(payload))
+            in [ :lines, _ ] then out(output, payload)
+            end
+          end
+        end
+      end
+    RB
+    report = lint(files, layers: [{ name: :application, paths: [%r{\Aapp/screen}] }, { name: :features, paths: [%r{\Aapp/feature}] }] + LintHelper::LAYERS.drop(1))
+    refute_finding report, :r11, /Order/
+    refute_finding report, :r4, /Order/
+  end
+
+  def test_parts_is_not_counted_on_the_public_surface
+    methods = (1..12).map { "def m#{_1} = nil" }.join("\n")
+    files = { "domain/wide.rb" => "module Domain; class Wide\n#{methods}\ndef parts = {}\nend; end\n" }
+    report = lint(files, super_strict: true)
+    refute_finding report, :public_surface, /Wide/
+  end
+end

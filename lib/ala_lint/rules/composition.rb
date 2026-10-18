@@ -7,7 +7,7 @@ module AlaLint
     # loops, and calls into units below the composition. Plus the two never-scored shares.
     class Composition < Base
       ROUTING = %i[redirect_to render head respond_to format turbo_stream redirect_back_or_to].freeze
-      WIRING = %i[wire_to wire_in on input_port push send_event request call new tap then freeze run].freeze
+      WIRING = %i[wire_to wire_in on input_port push send_event request call new tap then freeze run out collect].freeze
       EDGE = %i[params expect permit require to_i to_s to_sym fetch dig [] presence].freeze
       EDGE_RECEIVERS = %w[session params flash cookies request response helpers].freeze
       COMPARISONS = %i[== != < > <= >= <=> include? === =~].freeze
