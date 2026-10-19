@@ -51,6 +51,11 @@ class CompositionTest < Minitest::Test
     refute lint({ "app/carts_controller.rb" => CONTROLLER }, tier: :strict).scored.any? { _1.check == :r11 }
   end
 
+  def test_a_dynamic_constant_path_still_lints_its_file
+    src = "class Drawing\n  def edges(part) = self.class::GROUNDED.map { \"  outside -- request --> \#{part}\" }\nend\n"
+    assert_finding lint("paradigms/drawing.rb" => src), :r3, /sentence built by interpolation/
+  end
+
   def test_template_logic_in_the_composition_only
     tpl = "<% if @s.rows.any? %><% @s.rows.each do |r| %><%= r[:q] + 1 %><% end %><% end %>\n<%= @s.ids.include?(1) %>\n<%= Product.count %>\n"
     layers = [{ name: :application, paths: [%r{\Aapp/views/pages/}] }, { name: :domain, paths: [%r{\Aapp/views/components/}] }, { name: :foundation, paths: [%r{\Aapp/models/}] }]
@@ -270,10 +275,11 @@ class PlainFeatureTest < Minitest::Test
     refute_finding report, :r4, /Order/
   end
 
-  def test_parts_is_not_counted_on_the_public_surface
+  def test_a_message_the_paradigm_declares_is_not_counted_on_the_public_surface
     methods = (1..12).map { "def m#{_1} = nil" }.join("\n")
     files = { "domain/wide.rb" => "module Domain; class Wide\n#{methods}\ndef parts = {}\nend; end\n" }
-    report = lint(files, super_strict: true)
-    refute_finding report, :public_surface, /Wide/
+    assert_finding lint(files, super_strict: true), :public_surface, /Wide exposes 13 public methods/
+    declared = files.merge("paradigms/wiring.rb" => "module Wiring\n  def parts = {}\n\n  private\n\n  def run(part) = part\nend\n")
+    refute_finding lint(declared, super_strict: true), :public_surface, /Wide/
   end
 end

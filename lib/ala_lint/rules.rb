@@ -8,10 +8,11 @@ require_relative "rules/minimality"
 require_relative "rules/ports"
 require_relative "rules/data"
 require_relative "rules/composition"
+require_relative "rules/clones"
 
 module AlaLint
   module Rules
-    ALL = [Coupling, State, Literals, Contracts, Naming, Minimality, Ports, Data, Composition].freeze
+    ALL = [Coupling, State, Literals, Contracts, Naming, Minimality, Ports, Data, Composition, Clones].freeze
 
     def self.run(model)
       ALL.flat_map { _1.new(model).run }.reject { model.config.off?(_1.check) }

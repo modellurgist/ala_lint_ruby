@@ -2,6 +2,9 @@ module AlaLint
   module Rules
     # What every rule group shares: the model, a findings list, and the vocabulary of layers.
     class Base
+      # Rails calls that route an outcome (render, redirect) rather than compute one.
+      ROUTING = %i[redirect_to render head respond_to format turbo_stream redirect_back_or_to].freeze
+
       attr_reader :model, :findings
 
       def initialize(model)

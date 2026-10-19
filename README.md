@@ -142,8 +142,9 @@ level". The checklist lists what each rule leaves to a human; so does this table
 | **subscribe** (advisory) | below the composition and above the bottom: `subscribe`, `turbo_stream_from`, `broadcast_*_to` with a literal topic | exact |
 | **ports** (advisory) | a class with `output`/`input` ports its header comment doesn't name (§5.8.2) | exact; the port macros are this edition's Foundation |
 | **ui_io** (advisory) | a template below the composition calling a record model or a store method | heuristic |
+| **clone** (advisory), **clone_inside** (reported) | the same logic in two methods, names aside: each method body is read as a sequence of syntax nodes in which local names, parameters, fields and literal values are placeholders while call, constant and symbol names stay; every pair of methods is aligned locally (Smith-Waterman), so a copied run inside a larger method counts as well as a whole copy, and an edited copy counts while at least 80% of the aligned nodes agree; at least 16 matched nodes (`clone.min_nodes`, `clone.min_similarity`). Methods whose matches cover the same stretch are one finding, at the first location listed. Not read: a composition's `initialize` and `parts` (placing parts), wiring-table arms, and bare `render`/`redirect_to` and the other routing calls, because they are alike by design. Across units it is `clone`; inside one unit it is `clone_inside`, never scored by a tier, because the checklist leaves an abstraction's interior to its author (R7, "little balls of mud"). Reported under R7 as this linter's reading: the checklist has no rule against copied logic; the message quotes Spray's "no other elements should know about this one thing" (§7.25), which the checklist cites under R5 and R6 | heuristic: structure and names, not meaning. A repeated idiom (a loop that walks units and flags) matches as well as a copied concept, and a shared output shape (two summaries a template reads) looks like shared logic. 16 is the size of a four-key hash of method reads, the smallest known copy; 20 drops most idiom matches and misses that copy |
 | **r10_aggregate** (advisory) | a lower-layer type read by two units of a peer-forbidden layer above it; a `Data`/`Struct` type that defines behaviour of its own (a `Money` with `+`) is an abstraction both ends depend on and is exempt, a bare field bag is a DTO and prompts | prompt |
-| **height**, **module_size**, **public_surface**, **module_avg**, **app_share** | thresholds (5 hops between units, 500 lines, 12 public methods not counting `initialize` and `parts`, 100-line average, 20% of functions). The public-method count is the number of input ports on one abstraction, not a count of abstractions; 12 sits just above the largest single-concept classes measured on the variants, and the modules above it were the ones later split | metrics |
+| **height**, **module_size**, **public_surface**, **module_avg**, **app_share** | thresholds (5 hops between units, 500 lines, 12 public methods not counting `initialize` or a message a paradigm declares (a public instance method of a paradigm-layer module, such as a wiring module's `parts`), 100-line average, 20% of functions). The public-method count is the number of input ports on one abstraction, not a count of abstractions; 12 sits just above the largest single-concept classes measured on the variants, and the modules above it were the ones later split | metrics |
 | **r11** (aspirational) | in composition units: branches (a branch whose arms only redirect, render or hand the view a constant, parameter, literal or landed value is routing and exempt; a wiring table, `case [part, output]` in a method named `wire` whose arms match two symbols, is wiring), arithmetic, iteration with a block, one lower call's result bound and handed to another or passed straight in (`new`, wiring calls including `run` and the part calls fed to it, `params`/`session`/`flash` and rendering exempt); in composition templates: branches, comparisons, arithmetic, loops, calls into lower units | heuristic; which departures the framework forces is judgement |
 | **ports_unwired**, **r11_share**, **unassigned** | report-only prompts | — |
 | **r8** | not checked: judgement | — |
@@ -154,9 +155,9 @@ a controller's method is a human's to check; and SQL, migrations and schema.
 ## Tiers and scores
 
 - **default**: the required checks score (R1, R2, R3, R4, R5, R6, R9, R10, layer validity).
-- **`--strict`**: adds the obtainable advisories (R7, passthrough, tramp, subscribe, ports, ui_io, r10_aggregate, height, module_size).
+- **`--strict`**: adds the obtainable advisories (R7, clone, passthrough, tramp, subscribe, ports, ui_io, r10_aggregate, height, module_size).
 - **`--super-strict`**: adds the aspirational ones (R11, public_surface).
-- app_share, module_avg, unassigned, ports_unwired and r11_share are reported at every tier and scored by none.
+- app_share, module_avg, clone_inside, unassigned, ports_unwired and r11_share are reported at every tier and scored by none.
 
 The score is the Elixir linter's: 100 minus weighted findings per 100 functions (weights R1/R2/R5/R9/R10 ×3,
 R4 ×2, the rest ×1), with a second count of functions carrying no scored finding, and the rules-met
@@ -172,7 +173,7 @@ lib/ala_lint/parser.rb       one Ruby file → Source::Units (Prism)
 lib/ala_lint/templates.rb    one ERB file → a template unit (compiled by ERB, parsed by Prism)
 lib/ala_lint/model.rb        the project: units, resolution, layers, edges
 lib/ala_lint/layers.rb       the declared layer map and the assignment
-lib/ala_lint/rules/*.rb      one file per concern (coupling, state, literals, contracts, naming, minimality, ports, data, composition)
+lib/ala_lint/rules/*.rb      one file per concern (coupling, state, literals, contracts, naming, minimality, ports, data, composition, clones)
 lib/ala_lint/report.rb       scores, rules met, text and JSON
 lib/ala_lint/checks.rb       the registry: check → rule, tier, weight, thresholds
 lib/ala_lint/config.rb       .ala_lint.rb + CLI overrides → effective levels
@@ -180,4 +181,5 @@ test/                        Minitest, one small project per test written to a t
 ```
 
 The linter lints itself (`bin/ala_lint lib`, no layer map): one R5 finding (`"helpers"` is a name
-`Model` and `Rules::Composition` both know) and a few advisories.
+`Model` and `Rules::Composition` both know) and advisories, among them nine `clone` findings, most
+of them the rules' shared idiom (walk the units, skip some, flag) rather than a copied concept.

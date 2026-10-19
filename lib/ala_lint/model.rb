@@ -49,14 +49,20 @@ module AlaLint
     end
     def framework_base?(unit) = unit.name.match?(FRAMEWORK_BASES) || (unit.superclass.to_s.match?(FRAMEWORK_BASES) && unit.methods.empty?)
 
-    # The public method names of the paradigm layers: the messages a port may send, so a
-    # `respond_to?` check against one of them is a paradigm's, not a peer's.
+    # The public instance methods the paradigm layers declare: the messages a port may send and a
+    # composition answers, so a `respond_to?` check against one is a paradigm's, not a peer's, and
+    # implementing one isn't widening a unit's own surface.
     def paradigm_messages
       @paradigm_messages ||= begin
+        lower = @units.select { layered? && paradigm_layers.include?(_1.layer) }
+        (lower.flat_map { |u| u.public_methods_list.map(&:name) } + %i[call push send_event request]).to_set
+      end
+    end
+
+    def paradigm_layers
+      @paradigm_layers ||= begin
         named = @layers&.layers&.select { _1.name.to_s.match?(/paradigm/) }
-        chosen = named&.any? ? named : [@layers&.layers&.[](-2) || @layers&.bottom].compact
-        lower = @units.select { layered? && chosen.include?(_1.layer) }
-        (lower.flat_map { |u| u.methods.map(&:name) } + %i[call push send_event request]).to_set
+        named&.any? ? named : [@layers&.layers&.[](-2) || @layers&.bottom].compact
       end
     end
 

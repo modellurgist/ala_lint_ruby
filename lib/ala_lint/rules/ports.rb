@@ -17,7 +17,10 @@ module AlaLint
         units.each do |u|
           next if u.template?
           owned_interfaces(u)
-          duck_typing(u) if below?(u) && !bottom?(u)
+          if below?(u) && !bottom?(u)
+            duck_typing(u)
+            type_tests(u)
+          end
           locators(u) if below?(u)
           header_ports(u)
         end
@@ -44,6 +47,20 @@ module AlaLint
           message = c.args.first.unescaped.to_sym
           next if model.paradigm_messages.include?(message)
           flag(:r9, u, c.line, "#{u.name}#{method_name(c.method)} checks respond_to?(:#{message}) on a collaborator: duck typing to a peer's own message is an owned interface (R9); send only a paradigm's messages")
+        end
+      end
+
+      # Swapping a duck-typed `respond_to?` for `is_a?(SomePeer)` would pass the check above while
+      # coupling harder; a type test is fine only against a paradigm or the foundation.
+      def type_tests(u)
+        u.calls.each do |c|
+          next unless %i[is_a? kind_of? instance_of?].include?(c.name)
+          arg = c.args.first
+          next unless arg.is_a?(Prism::ConstantReadNode) || arg.is_a?(Prism::ConstantPathNode)
+          name = arg.is_a?(Prism::ConstantReadNode) ? arg.name.to_s : (arg.full_name rescue nil)
+          target = (resolved = model.resolve_name(name, u)) && model.unit(resolved)
+          next unless target&.layer && !model.paradigm_layers.include?(target.layer) && !bottom?(target)
+          flag(:r9, u, c.line, "#{u.name}#{method_name(c.method)} checks #{c.name}(#{target.name}) on a collaborator: a type test against a peer's class is an owned interface (R9); test only against a paradigm")
         end
       end
 

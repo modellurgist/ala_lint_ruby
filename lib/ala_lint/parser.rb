@@ -406,7 +406,7 @@ module AlaLint
       when Prism::ConstantPathNode then node.full_name
       else nil
       end
-    rescue Prism::ConstantPathNode::DynamicPartsError, NoMethodError
+    rescue Prism::ConstantPathNode::DynamicPartsInConstantPathError, Prism::ConstantPathNode::MissingNodesInConstantPathError, NoMethodError
       nil
     end
 

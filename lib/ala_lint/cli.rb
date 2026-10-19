@@ -36,7 +36,8 @@ module AlaLint
         --enforce CHECK      promote one check to scored (repeatable)
         --disable CHECK      turn one check off (repeatable; the report says so)
         --set KEY=VALUE      retune a threshold: height.max, module_size.max, public_surface.max,
-                             app_share.max, module_avg.min_avg (repeatable)
+                             app_share.max, module_avg.min_avg, clone.min_nodes,
+                             clone.min_similarity (repeatable)
     TXT
 
     def self.run(argv, out: $stdout, err: $stderr)

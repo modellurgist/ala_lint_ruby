@@ -63,12 +63,9 @@ module AlaLint
         flag(:module_size, u, u.line, "#{u.name} is #{u.loc} lines, over #{max}: too big to read alone (R7, Summary)") if u.loc > max
       end
 
-      # `parts` is the paradigm's message (what a drawing or a coverage test reads), not an input.
-      PARADIGM = %i[initialize parts].freeze
-
       def surface(u)
         return if composition?(u) || u.script? || model.framework_subclass?(u)
-        public = u.methods.select { _1.visibility == :public && !_1.singleton && !PARADIGM.include?(_1.name) }.map(&:name).uniq
+        public = u.public_methods_list.reject { _1.name == :initialize || model.paradigm_messages.include?(_1.name) }.map(&:name).uniq
         max = config.threshold(:public_surface, :max)
         return unless public.size > max
         flag(:public_surface, u, u.line, "#{u.name} exposes #{public.size} public methods (max #{max}): a wide main interface means the little ball of mud has leaked past its boundary (R7, R9 §2.3.4)")

@@ -104,6 +104,17 @@ class PortsTest < Minitest::Test
     refute_finding r, :r9, /Screen/
   end
 
+  def test_type_tests_only_against_a_paradigm_or_the_foundation
+    r = lint(
+      "domain/drawing.rb" => "class Drawing\n  def peer?(p) = p.is_a?(Stripe)\n  def port?(p) = p.kind_of?(DataFlow)\n  def money?(v) = v.is_a?(Gateway)\n  def hash?(v) = v.is_a?(Hash)\nend\n",
+      "domain/stripe.rb" => "class Stripe; def charge; end; end\n",
+      "paradigms/data_flow.rb" => "module DataFlow; def push(v); end; end\n",
+      "foundation/gateway.rb" => "class Gateway; def charge; end; end\n"
+    )
+    assert_finding r, :r9, /Drawing#peer\? checks is_a\?\(Stripe\) on a collaborator/
+    refute_finding r, :r9, /DataFlow|Gateway|Hash/
+  end
+
   def test_header_comment_ports_and_unwired_outputs
     r = lint(
       "domain/wish.rb" => "# Keeps product ids. Ports out: added. Config: none.\nclass Wish\n  output :added, DataFlow\n  output :removed, DataFlow\n  input(:add, DataFlow) { }\nend\n",
