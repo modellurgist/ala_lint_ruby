@@ -156,6 +156,43 @@ class DataTest < Minitest::Test
     assert_finding r, :r10, /belongs_to :product: reads another feature's record through Product/
     assert_finding r, :r10, /has_many :notes: lets a feature walk into another's table \(Note\)/
   end
+
+  PRODUCT = "class Product < ApplicationRecord\n  has_many :cart_items, dependent: :delete_all\nend\n"
+  ITEM = "class CartItem < ApplicationRecord\n  belongs_to :product\nend\n"
+
+  def test_an_identity_declaring_its_lifecycle_is_not_a_shared_entity
+    r = lint({ "foundation/product.rb" => PRODUCT, "foundation/cart_item.rb" => ITEM, "domain/lines.rb" => "class Lines; def x(id) = CartItem.where(product_id: id); end\n" },
+             config: { identity_models: %w[Product] })
+    refute_finding r, :r10
+  end
+
+  def test_a_lifecycle_association_a_feature_reads_through_is_still_a_finding
+    reads = { "domain/stock.rb" => "class Stock; def held(id) = Product.find(id).cart_items.sum(:quantity); end\n" }
+    r = lint({ "foundation/product.rb" => PRODUCT, "foundation/cart_item.rb" => ITEM }.merge(reads), config: { identity_models: %w[Product] })
+    assert_finding r, :r10, /Product has_many :cart_items: .*Stock#held reads through it \(domain\/stock.rb:1\)/
+    joins = { "domain/stock.rb" => "class Stock; def held = Product.includes(:cart_items).to_a; end\n" }
+    r = lint({ "foundation/product.rb" => PRODUCT, "foundation/cart_item.rb" => ITEM }.merge(joins), config: { identity_models: %w[Product] })
+    assert_finding r, :r10, /Product has_many :cart_items: .*Stock#held reads through it/
+  end
+
+  def test_lifecycle_needs_the_identity_and_a_dependent_option
+    r = lint({ "foundation/product.rb" => PRODUCT })
+    assert_finding r, :r10, /Product has_many :cart_items: lets a feature walk into another's table \(CartItem\).*list it under identity_models/
+    bare = "class Product < ApplicationRecord\n  has_many :cart_items\nend\n"
+    assert_finding lint({ "foundation/product.rb" => bare }, config: { identity_models: %w[Product] }), :r10, /Product has_many :cart_items: lets a feature walk/
+  end
+
+  def test_a_lifecycle_configured_in_the_composition
+    plain = "class Product < ApplicationRecord\n  def x = 1\nend\n"
+    lifecycle = "Product.has_many :cart_items, dependent: :delete_all\n"
+    r = lint({ "foundation/product.rb" => plain, "app/lifecycle.rb" => lifecycle })
+    refute_finding r, :r10
+    r = lint({ "foundation/product.rb" => plain, "app/lifecycle.rb" => "Product.has_many :cart_items\n" })
+    assert_finding r, :r10, /Product has_many :cart_items \(configured in app\/lifecycle\): lets a feature walk/
+    reads = { "domain/stock.rb" => "class Stock; def held(p) = p.cart_items.count; end\n" }
+    r = lint({ "foundation/product.rb" => plain, "app/lifecycle.rb" => lifecycle }.merge(reads))
+    assert_finding r, :r10, /Product has_many :cart_items \(configured in app\/lifecycle\): .*Stock#held reads through it/
+  end
 end
 
 class ResolutionTest < Minitest::Test

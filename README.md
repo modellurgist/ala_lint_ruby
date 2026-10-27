@@ -20,12 +20,13 @@ the syntax tree directly: there is no intermediate encoding and no `ala.encode` 
 bin/ala_lint --root path/to/app            # score app/, lib/ and config/routes.rb
 bin/ala_lint lib                            # a subtree (paths are relative to --root, default .)
 bin/ala_lint --root app --strict            # score the obtainable advisory checks too
-bin/ala_lint --root app --super-strict      # and the aspirational ones (R11, public_surface)
+bin/ala_lint --root app --super-strict      # and the aspirational one (R11)
 bin/ala_lint --root app --min-score 80      # exit 1 below 80 (the CI gate)
 bin/ala_lint --root app --require-layers    # exit 1 if any unit matches no layer
 bin/ala_lint --root app --enforce r7        # promote one check to scored
 bin/ala_lint --root app --disable r3        # turn one off (the report says so)
 bin/ala_lint --root app --set height.max=4  # retune a threshold
+bin/ala_lint --root app --set r11.calls=wired_only  # R11 reads hand-offs into wired parts only
 bin/ala_lint --root app --format json
 bin/ala_lint --list-checks                  # every check, its tier and threshold
 bin/ala_lint --help                         # unknown flags fail with the usage, never silently
@@ -49,7 +50,7 @@ team *declares*, top first; inferring them from the call graph would make R1 tru
     { name: :paradigms,   paths: [%r{\Aapp/ala/programming_paradigms/}] },
     { name: :foundation,  paths: [%r{\Aapp/ala/foundation/}, %r{\Aapp/models/}], uses: [/\AApplicationRecord\z/], peer_ok: true }
   ],
-  identity_models: %w[Cart],        # belongs_to these is sharing an identity key, not data (R10)
+  identity_models: %w[Cart],        # belongs_to these is sharing an identity key, and their dependent: is lifecycle (R10)
   paths: %w[app lib config/routes.rb],
   exclude: [%r{/views/layouts/}],
   min_score: 80,
@@ -68,6 +69,12 @@ may hold application literals.
 A check's setting is a level (`:off`, `:advisory`, `:scored`) or a hash with a `level:` and
 thresholds. The CLI flags override the file for one run, and a run that disabled or downgraded a
 check says so in its parameter echo.
+
+R11 takes one setting that is a reading, not a number: `calls:` is `:all` (the default) or
+`:wired_only`, as in `checks: { r11: { level: :advisory, calls: :wired_only } }` or
+`--set r11.calls=wired_only`. Any other value fails the run. `:wired_only` is for a composition that
+wires only the parts two or more compositions place and calls the rest (ALA Light, subset 3): a
+call-and-return there is the design, not handled data.
 
 ## Accepting a finding by hand (`ala:accept`)
 
@@ -134,18 +141,19 @@ level". The checklist lists what each rule leaves to a human; so does this table
 | **r5** | the same identifier-like string in two units unless both are the composition (render paths, `class:`/`data:` values, string-method arguments and a few MIME/HTTP words skipped; a template's `id=`, `name=`, `data-controller=` values count); a `$2.99` label whose cents are an integer literal somewhere; `send`/`public_send` with a name built from a string | heuristic: textual duplication, not semantic agreement |
 | **r6** | role names (`*Service`, `*Manager`, `*Helper` outside `app/helpers`, `*Handler`, `*Utils`), meaningless method names (`f1`, `process2`, `tmp`, single letters), a public method that is one operator over its parameters (a predicate, or a method over its own configured field, is spared) | weak heuristic; naming is judgement |
 | **r9** | a peer module included as an interface; subclassing an abstract base (`raise NotImplementedError`); `respond_to?(:x)` on a collaborator where `x` isn't a paradigm's message; `Rails.configuration`, `Rails.application`, `ENV`, `Import[]`, `Dry::Container` below the composition | exact on these forms; whether outputs announce is judgement |
-| **r10** | a record or value type read by two units of one peer-forbidden layer (constructing one isn't reading it); `has_many`/`has_one`; `belongs_to` a model not listed under `identity_models` | heuristic on associations |
+| **r10** | a record or value type read by two units of one peer-forbidden layer (constructing one isn't reading it); `has_many`/`has_one`; `belongs_to` a model not listed under `identity_models`. Exempt as the identity's lifecycle (deleting it removes the rows keyed by it): a `has_many`/`has_one` with `dependent:` on a model listed under `identity_models`, or one the composition configures on a record (`Product.has_many :cart_items, dependent: :delete_all`), as long as no unit reads or walks through it: a call of the association's name, a query naming it (`includes`, `joins`, `preload`, `eager_load`, `left_joins`, `references`) or a `through:` it. A read is reported with where it is | heuristic on associations; the read is found by name, so a same-named method elsewhere counts as one |
 | **layer** | an `@ala_layer` tag naming no declared layer | exact |
 | **r7** (advisory) | a private method named nowhere in the project (calls, symbols, `&:name`; a dynamic `send` anywhere turns it off) | exact on names |
 | **passthrough** (advisory) | a public method whose body only renames another unit's method with the same arguments; delegation over a field is reported as the §7.16 shape | heuristic |
 | **tramp** (advisory) | a public parameter never read, only passed bare to another unit's method that passes it on again (R6's "should") | heuristic; only const-receiver calls resolve |
 | **subscribe** (advisory) | below the composition and above the bottom: `subscribe`, `turbo_stream_from`, `broadcast_*_to` with a literal topic | exact |
-| **ports** (advisory) | a class with `output`/`input` ports its header comment doesn't name (§5.8.2) | exact; the port macros are this edition's Foundation |
+| **ports** (advisory) | a class with `output`/`input` ports its header comment doesn't name (§5.8.2). A class nested in a unit (`module Live` holding `class Feed`) is held to its own header and blamed at its own line; the enclosing module answers only for ports it declares itself | exact; the port macros are this edition's Foundation |
 | **ui_io** (advisory) | a template below the composition calling a record model or a store method | heuristic |
 | **clone** (advisory), **clone_inside** (reported) | the same logic in two methods, names aside: each method body is read as a sequence of syntax nodes in which local names, parameters, fields and literal values are placeholders while call, constant and symbol names stay; every pair of methods is aligned locally (Smith-Waterman), so a copied run inside a larger method counts as well as a whole copy, and an edited copy counts while at least 80% of the aligned nodes agree; at least 16 matched nodes (`clone.min_nodes`, `clone.min_similarity`). Methods whose matches cover the same stretch are one finding, at the first location listed. Not read: a composition's `initialize` and `parts` (placing parts), wiring-table arms, and bare `render`/`redirect_to` and the other routing calls, because they are alike by design. Across units it is `clone`; inside one unit it is `clone_inside`, never scored by a tier, because the checklist leaves an abstraction's interior to its author (R7, "little balls of mud"). Reported under R7 as this linter's reading: the checklist has no rule against copied logic; the message quotes Spray's "no other elements should know about this one thing" (§7.25), which the checklist cites under R5 and R6 | heuristic: structure and names, not meaning. A repeated idiom (a loop that walks units and flags) matches as well as a copied concept, and a shared output shape (two summaries a template reads) looks like shared logic. 16 is the size of a four-key hash of method reads, the smallest known copy; 20 drops most idiom matches and misses that copy |
 | **r10_aggregate** (advisory) | a lower-layer type read by two units of a peer-forbidden layer above it; a `Data`/`Struct` type that defines behaviour of its own (a `Money` with `+`) is an abstraction both ends depend on and is exempt, a bare field bag is a DTO and prompts | prompt |
-| **height**, **module_size**, **public_surface**, **module_avg**, **app_share** | thresholds (5 hops between units, 500 lines, 12 public methods not counting `initialize` or a message a paradigm declares (a public instance method of a paradigm-layer module, such as a wiring module's `parts`), 100-line average, 20% of functions). The public-method count is the number of input ports on one abstraction, not a count of abstractions; 12 sits just above the largest single-concept classes measured on the variants, and the modules above it were the ones later split | metrics |
-| **r11** (aspirational) | in composition units: branches (a branch whose arms only redirect, render or hand the view a constant, parameter, literal or landed value is routing and exempt; a wiring table, `case [part, output]` in a method named `wire` whose arms match two symbols, is wiring), arithmetic, iteration with a block, one lower call's result bound and handed to another or passed straight in (`new`, wiring calls including `run` and the part calls fed to it, `params`/`session`/`flash` and rendering exempt); in composition templates: branches, comparisons, arithmetic, loops, calls into lower units | heuristic; which departures the framework forces is judgement |
+| **height**, **module_size**, **module_avg**, **app_share** | thresholds (5 hops between units, 500 lines, 100-line average, 20% of functions) | metrics |
+| **public_surface** (reported) | a unit whose public ports are an outlier among its own layer's units: more than max(`floor`, Q3 + `k` × IQR), where Q1 and Q3 are the quartiles (linear interpolation) of the port counts of the layer's units that have any ports, and `floor` (10, as in the Elixir linter) keeps a small app quiet (`public_surface.floor`, `public_surface.k`, default 1.5: Tukey's fence). A port is a public instance method, not counting `initialize` or a message a paradigm declares (a public instance method of a paradigm-layer module, such as a wiring module's `parts`); a method whose body only dispatches on a parameter's shape (`case change in { stock: } ... in { amount: }`) is one port per pattern. Not counted: compositions, framework subclasses, and calibration modules, whose every public method returns a literal, a constant, a literal list or map, or a value picked from a literal table by a key argument (a table of the store's values, not an abstraction with ports). Never scored by a tier: Spray gives no count, so it is a prompt for the R6/R7 judgement | metric relative to the app; floor 10 is this linter's choice |
+| **r11** (aspirational) | in composition units, in a method or in a lambda a constant holds (attributed to the constant): branches (a branch, `case`/`when` or `case`/`in` included, whose arms only redirect, render or hand the view a constant, parameter, literal or landed value is routing and exempt; a wiring table, `case [part, output]` in a method named `wire` whose arms match two symbols, is wiring; an arm may alternate wires, `[ :a, :x ] \| [ :b, :y ]`, or match every other output of a part with `[ :a, _ ]`), arithmetic, iteration with a block, one lower call's result bound and handed to another or passed straight in (`new`, wiring calls including `run` and the part calls fed to it, `params`/`session`/`flash` and rendering exempt; under `r11.calls=wired_only` also a hand-off into a field or local the composition never lists in `parts`, hands to `run` or joins with `wire_to`, a called part); in composition templates: branches (a `case`/`if` whose arms only render or hold markup picks a view and is routing; write it with `-%>` so the compiled Ruby parses), comparisons, arithmetic, loops, calls into lower units. In both, choosing what runs by a name built at run time, the same branch out of sight: `render` with an interpolated or concatenated name (`render "portal/#{step}"`), a `partial:`/`template:` option (on any call, `turbo_stream.replace` too; on `render` also `layout:`, `action:`, `file:` when it has no positional name) that isn't a fixed name, and `send`/`public_send`/`__send__`/`method`/`const_get` with, or `constantize`/`safe_constantize` on, a name that isn't fixed. A fixed name is a literal, a constant, a value picked from a literal table of names (`VIEWS.fetch(step)`, a hash or list whose values are strings, symbols, constants or lambdas: a closed dispatch table is routing), a local or field every assignment of which is one, or a parameter every caller in the project passes one for. `render x` with a plain variable is not read, because it also renders objects | heuristic; which departures the framework forces is judgement. A name read from the app's configuration (`Rails.configuration.x.gateway.constantize`, `ENV`) is fixed at boot and counts as fixed |
 | **ports_unwired**, **r11_share**, **unassigned** | report-only prompts | — |
 | **r8** | not checked: judgement | — |
 
@@ -156,8 +164,8 @@ a controller's method is a human's to check; and SQL, migrations and schema.
 
 - **default**: the required checks score (R1, R2, R3, R4, R5, R6, R9, R10, layer validity).
 - **`--strict`**: adds the obtainable advisories (R7, clone, passthrough, tramp, subscribe, ports, ui_io, r10_aggregate, height, module_size).
-- **`--super-strict`**: adds the aspirational ones (R11, public_surface).
-- app_share, module_avg, clone_inside, unassigned, ports_unwired and r11_share are reported at every tier and scored by none.
+- **`--super-strict`**: adds the aspirational one (R11).
+- public_surface, app_share, module_avg, clone_inside, unassigned, ports_unwired and r11_share are reported at every tier and scored by none.
 
 The score is the Elixir linter's: 100 minus weighted findings per 100 functions (weights R1/R2/R5/R9/R10 ×3,
 R4 ×2, the rest ×1), with a second count of functions carrying no scored finding, and the rules-met
@@ -180,6 +188,7 @@ lib/ala_lint/config.rb       .ala_lint.rb + CLI overrides → effective levels
 test/                        Minitest, one small project per test written to a temp dir
 ```
 
-The linter lints itself (`bin/ala_lint lib`, no layer map): one R5 finding (`"helpers"` is a name
-`Model` and `Rules::Composition` both know) and advisories, among them nine `clone` findings, most
-of them the rules' shared idiom (walk the units, skip some, flag) rather than a copied concept.
+The linter lints itself (`bin/ala_lint lib`, no layer map): two R5 findings (`"helpers"` is a name
+`Model` and `Rules::Composition` both know, `"partial"` one `Templates` and `Rules::Composition` both
+know) and advisories, among them thirteen `clone` findings, most of them the rules' shared idiom
+(walk the units, skip some, flag) rather than a copied concept.

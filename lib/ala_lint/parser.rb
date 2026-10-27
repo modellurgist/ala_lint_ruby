@@ -85,7 +85,8 @@ module AlaLint
         name: name, file: @file, line: line, end_line: end_line, kind: kind, loc: 0, includes: [], extends: [], prepends: [],
         methods: [], constants: {}, refs: [], calls: [], literals: [], strings: [], ivar_writes: [], cvars: [], gvars: [],
         header_comment: "", tag: nil, outputs: {}, inputs: {}, macros: [], symbols: [], texts: [], attr_readers: [],
-        data_type: nil, branches: [], arith: [], loops: [], layer: nil, body_nodes: [], lambda_ivar_writes: [], inherent_declarations: []
+        data_type: nil, branches: [], arith: [], loops: [], layer: nil, body_nodes: [], lambda_ivar_writes: [], inherent_declarations: [],
+        assigns: [], constant_values: {}, ports: [], wired: Set.new
       ).tap { _1.instance_variable_set(:@nesting, nesting) }
     end
 
@@ -125,7 +126,9 @@ module AlaLint
           inner = nesting + [const_name(node.constant_path)]
           unit.constants[inner.last] = node.location.start_line
           body = node.body.respond_to?(:body) ? node.body.body : []
+          previous, @port_owner = @port_owner, [inner.join("::"), node.location.start_line, header_comment(node.location.start_line)]
           visit_body(body, unit, nil, inner, false)
+          @port_owner = previous
         when Prism::SingletonClassNode
           body = node.body.respond_to?(:body) ? node.body.body : []
           visit_body(body, unit, nil, nesting, true)
@@ -177,6 +180,7 @@ module AlaLint
         return
       when Prism::ConstantWriteNode
         unit.constants[node.name.to_s] = line
+        unit.constant_values[node.name.to_s] = node.value
         visit_declared_value(node.name.to_s, node.value, unit, method, nesting, singleton, in_block, line)
         return
       when Prism::CallNode
@@ -201,6 +205,7 @@ module AlaLint
                                   operator: node.respond_to?(:binary_operator) ? node.binary_operator : (node.is_a?(Prism::InstanceVariableOrWriteNode) ? :"||" : nil),
                                   value_kind: value_kind(node.value))
         (method ? method.ivar_writes : unit.ivar_writes) << w
+        unit.assigns << [method&.name, node.name.to_s, node.value]
         unit.ivar_writes << w if method
         visit_declared_value(node.name.to_s, node.value, unit, method, nesting, singleton, in_block, line)
         return
@@ -211,8 +216,11 @@ module AlaLint
       when Prism::LocalVariableReadNode
         method.reads[node.name] += 1 if method
         return
+      when Prism::InstanceVariableReadNode
+        unit.wired << node.name.to_s if method&.name == :parts
       when Prism::LocalVariableWriteNode
         method&.handoffs&.push([node.name, node.value, line]) if handed_value?(node.value)
+        unit.assigns << [method&.name, node.name.to_s, node.value]
       when Prism::CaseMatchNode
         return visit_wiring_table(node, unit, method, nesting, singleton) if wiring_table?(node, method)
         (method ? method.branches : unit.branches) << [node, in_block]
@@ -232,13 +240,23 @@ module AlaLint
     end
 
     # The plain wiring shape: `wire(part, output, payload)` dispatching on `[part, output]` with symbol
-    # patterns. Each arm is a wire; what it lands or runs is wiring, not logic.
+    # patterns. Each arm is a wire; what it lands or runs is wiring, not logic. `[ :a, :x ] | [ :b, :y ]` is
+    # several wires sharing one landing, and `_` names "every other output" of a part, so both stay wiring.
     def wiring_table?(node, method)
-      method&.name == :wire && node.conditions.all? do |arm|
-        p = arm.pattern
-        p.is_a?(Prism::ArrayPatternNode) && p.requireds.size == 2 && p.requireds.all?(Prism::SymbolNode)
+      method&.name == :wire && node.conditions.all? { wire_pattern?(_1.pattern) }
+    end
+
+    def wire_pattern?(pattern)
+      case pattern
+      when Prism::AlternationPatternNode then wire_pattern?(pattern.left) && wire_pattern?(pattern.right)
+      when Prism::ArrayPatternNode
+        ends = pattern.requireds
+        pattern.rest.nil? && pattern.posts.empty? && ends.size == 2 && ends.all? { wire_end?(_1) } && ends.any?(Prism::SymbolNode)
+      else false
       end
     end
+
+    def wire_end?(node) = node.is_a?(Prism::SymbolNode) || (node.is_a?(Prism::LocalVariableTargetNode) && node.name.start_with?("_"))
 
     def visit_wiring_table(node, unit, method, nesting, singleton)
       (method ? method.wiring_tables : unit.branches) << node
@@ -270,12 +288,21 @@ module AlaLint
       previous = @literal_context
       @literal_context = :raise if recv.nil? && %i[raise warn fail].include?(node.name)
       @literal_context = :class_attr if args.first.is_a?(Prism::KeywordHashNode) && false
+      record_wired(node, unit)
       wired = @wired_arg
       @wired_arg = true if recv.nil? && node.name == :run
       args.each { visit_arg(_1, unit, method, nesting, singleton, in_block, node) }
       @wired_arg = wired
       @literal_context = previous
       visit(node.block, unit, method, nesting, singleton, in_block) if node.block
+    end
+
+    def record_wired(node, unit)
+      parts = if node.receiver.nil? && node.name == :run then node.arguments&.arguments.to_a.grep(Prism::CallNode).map(&:receiver)
+              elsif node.name == :wire_to then [node.receiver, node.arguments&.arguments&.first]
+              else []
+              end
+      parts.each { unit.wired << _1.name.to_s if _1.is_a?(Prism::InstanceVariableReadNode) || _1.is_a?(Prism::LocalVariableReadNode) }
     end
 
     # Hash values keep their key so a string under `class:` or `message:` can be told apart later.
@@ -310,8 +337,11 @@ module AlaLint
       when :include then unit.includes.concat(names); names.each { add_ref(unit, _1, :include, line, nil) }
       when :extend then unit.extends.concat(names); names.each { add_ref(unit, _1, :extend, line, nil) }
       when :prepend then unit.prepends.concat(names); names.each { add_ref(unit, _1, :prepend, line, nil) }
-      when :output then unit.outputs[names.first.to_sym] = line if names.first
-      when :input then unit.inputs[names.first.to_sym] = line if names.first
+      when :output, :input
+        return unless names.first
+        (node.name == :output ? unit.outputs : unit.inputs)[names.first.to_sym] = line
+        owner, owner_line, owner_header = @port_owner
+        unit.ports << Source::Port.new(name: names.first.to_sym, direction: node.name, line: line, owner: owner, owner_line: owner_line, owner_header: owner_header)
       when :attr_reader, :attr_accessor then unit.attr_readers.concat(names.map(&:to_sym))
       end
     end

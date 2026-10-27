@@ -7,14 +7,18 @@ module AlaLint
       :name, :file, :line, :end_line, :kind, :loc, :superclass, :includes, :extends, :prepends,
       :methods, :constants, :refs, :calls, :literals, :strings, :ivar_writes, :cvars, :gvars,
       :header_comment, :tag, :outputs, :inputs, :macros, :symbols, :texts, :attr_readers, :data_type,
-      :branches, :arith, :loops, :layer, :body_nodes, :lambda_ivar_writes, :inherent_declarations,
-      keyword_init: true
+      :branches, :arith, :loops, :layer, :body_nodes, :lambda_ivar_writes, :inherent_declarations, :assigns, :constant_values,
+      :ports, :wired, keyword_init: true
     ) do
       def template? = kind == :template
       def script? = kind == :script
       def method_at(line) = methods.select { _1.line <= line && line <= _1.end_line }.min_by { _1.end_line - _1.line }
       def public_methods_list = methods.select { _1.visibility == :public && !_1.singleton }
+      # The fields and locals a composition lists in `parts`, hands to `run` or joins with `wire_to`.
+      def wired?(name) = wired.include?(name)
       def references?(unit_name) = refs.any? { _1.resolved == unit_name }
+      # The values a local (in `method`) or a field (anywhere in the unit) is ever assigned.
+      def assigned_values(name, method) = assigns.filter_map { |scope, n, v| v if n == name && (name.start_with?("@") || scope == method) }
     end
 
     Method = Struct.new(:name, :line, :end_line, :visibility, :singleton, :params, :keyword_defaults,
@@ -32,5 +36,8 @@ module AlaLint
     Str = Struct.new(:value, :line, :method, :context, :interpolated, :words, :inherent, keyword_init: true)
     IvarWrite = Struct.new(:name, :line, :method, :in_block, :operator, :value_kind, keyword_init: true)
     Macro = Struct.new(:name, :args, :line, :block, keyword_init: true)
+    # A port with the class or module that declares it: a nested class's own header documents its
+    # ports, not the enclosing unit's. `owner` nil means the unit itself.
+    Port = Struct.new(:name, :direction, :line, :owner, :owner_line, :owner_header, keyword_init: true)
   end
 end

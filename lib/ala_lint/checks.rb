@@ -20,7 +20,7 @@ module AlaLint
       Check.new(:r5, :r5, :required, 3, "no silent contracts: the same identifier string in two units, a label restating a configured amount, dynamic method names agreed across classes", {}),
       Check.new(:r6, :r6, :required, 1, "every abstraction names a learnable concept: no meaningless or role names, no primitive wrappers", {}),
       Check.new(:r9, :r9, :required, 3, "ports by paradigm: no peer mixin as an interface, no abstract base class as a port, no duck-typed peer messages or type tests against a peer's class, no container, locator or global config lookup below the composition", {}),
-      Check.new(:r10, :r10, :required, 3, "no shared entity: a data type read by two units of one peer-forbidden layer; an association that walks into another feature's table", {}),
+      Check.new(:r10, :r10, :required, 3, "no shared entity: a data type read by two units of one peer-forbidden layer; an association that walks into another feature's table (an identity's dependent: lifecycle no unit reads is exempt)", {}),
       Check.new(:layer, :r1, :required, 3, "layer validity: a tag naming an undeclared layer", {}),
 
       Check.new(:r7, :r7, :advisory, 1, "unearned abstraction: a dead private method, or a trivial single-use one", {}),
@@ -34,9 +34,9 @@ module AlaLint
       Check.new(:clone, :r7, :advisory, 1, "the same logic in two methods (names and literals aside): one concept written twice", { min_nodes: 16, min_similarity: 0.8 }),
       Check.new(:r10_aggregate, :r10, :advisory, 1, "a lower-layer data type read by two units of a peer-forbidden layer above it", {}),
 
-      Check.new(:r11, :r11, :aspirational, 1, "no logic in a composition layer: branches (routing exempt), arithmetic, iteration, handled data, template logic", {}),
-      Check.new(:public_surface, :r9, :aspirational, 1, "a unit with more than N public methods", { max: 12 }),
+      Check.new(:r11, :r11, :aspirational, 1, "no logic in a composition layer: branches (routing and literal dispatch tables exempt), arithmetic, iteration, handled data, template logic, names built at run time", { calls: :all }),
 
+      Check.new(:public_surface, :r7, :reported, 1, "a unit whose public ports are an outlier in its layer: above max(floor, Q3 + k × IQR)", { floor: 10, k: 1.5 }),
       Check.new(:clone_inside, :r7, :reported, 1, "the same logic in two methods of one unit: the abstraction's interior, never scored by a tier", {}),
       Check.new(:app_share, :r11, :reported, 1, "the composition layers' share of all functions", { max: 0.2 }),
       Check.new(:module_avg, :r7, :reported, 1, "units averaging under N lines", { min_avg: 100 }),
@@ -44,6 +44,10 @@ module AlaLint
       Check.new(:ports_unwired, :r8, :reported, 1, "a declared output no composition names", {}),
       Check.new(:r11_share, :r11, :reported, 1, "share of composition functions holding logic", {})
     ].freeze
+
+    # A setting that names a reading rather than a number; `wired_only` leaves out hand-offs into a
+    # part the composition calls and never wires (ALA Light, subset 3).
+    CHOICES = { "r11.calls" => %i[all wired_only] }.freeze
 
     BY_NAME = ALL.to_h { [_1.name, _1] }.freeze
     RULES = %i[r1 r2 r3 r4 r5 r6 r7 r8 r9 r10 r11].freeze

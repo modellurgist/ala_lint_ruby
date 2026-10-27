@@ -76,11 +76,12 @@ module AlaLint
 
       def header_ports(u)
         return if composition?(u)
-        declared = (u.outputs.keys + u.inputs.keys).map(&:to_s)
-        return if declared.empty?
-        missing = declared.reject { |p| u.header_comment.match?(/\b#{Regexp.escape(p)}\b/) }
-        return if missing.empty?
-        flag(:ports, u, u.line, "#{u.name} declares ports its header comment doesn't list (#{missing.join(', ')}): a reader of the wiring should see the ports without opening the body (R6, R9 §5.8.2)")
+        u.ports.sort_by { _1.direction == :output ? 0 : 1 }.group_by(&:owner).each do |owner, ports|
+          header = owner ? ports.first.owner_header : u.header_comment
+          missing = ports.map { _1.name.to_s }.uniq.reject { |p| header.match?(/\b#{Regexp.escape(p)}\b/) }
+          next if missing.empty?
+          flag(:ports, u, owner ? ports.first.owner_line : u.line, "#{owner || u.name} declares ports its header comment doesn't list (#{missing.join(', ')}): a reader of the wiring should see the ports without opening the body (R6, R9 §5.8.2)")
+        end
       end
 
       # An output name no composition mentions as a symbol is possibly never wired: a prompt for a

@@ -31,6 +31,25 @@ class CompositionTest < Minitest::Test
     end
   RB
 
+  def test_logic_in_a_lambda_a_constant_holds_is_the_constants
+    src = <<~RB
+      class PortalController < ApplicationController
+        VOLUME_TIER = ->(subtotal) { subtotal > 100 ? 5 : 0 }
+        RATES = { flat: ->(n) { n * 2 } }.freeze
+        EACH = ->(lines) { lines.each { } }
+        VIEWS = { lines: ->(s) { s }, review: "portals/review" }.freeze
+        def show = (@totals = Totals.new(volume: VOLUME_TIER))
+      end
+    RB
+    r = lint("app/portal_controller.rb" => src, "domain/totals.rb" => "class Totals; def initialize(volume:); end; end\n")
+    assert_finding r, :r11, /PortalController::VOLUME_TIER branches \(if\)/
+    assert_finding r, :r11, /PortalController::RATES computes \(\*\)/
+    assert_finding r, :r11, /PortalController::EACH iterates \(each\)/
+    refute_finding r, :r11, /VIEWS/
+    refute_finding r, :r11, /#show/
+    assert_finding r, :r11_share, /3 of 5 composition functions/
+  end
+
   def test_logic_kinds_and_the_routing_exemption
     r = lint("app/carts_controller.rb" => CONTROLLER, "domain/pricing.rb" => "class Pricing; def self.sum(l); end; end\n", "domain/totals.rb" => "class Totals; def initialize(l); end; end\n")
     refute_finding r, :r11, /#destroy branches/
@@ -74,6 +93,106 @@ class CompositionTest < Minitest::Test
     assert_finding r, :app_share, /composition layers hold 67% of all functions/
     refute r.scored.any? { _1.check == :app_share }
     assert lint({ "app/a.rb" => "class A; def x; end; def y; end; end\n", "domain/b.rb" => "class B; def x; end; end\n" }, tier: :super_strict).advisory.any? { _1.check == :app_share }
+  end
+end
+
+class RoutingAndRunTimeNamesTest < Minitest::Test
+  include LintHelper
+
+  def controller(body, consts = "") = { "app/portal_controller.rb" => "class PortalController < ApplicationController\n#{consts}#{body}\nend\n" }
+
+  def test_a_case_in_on_a_step_whose_arms_only_render_or_redirect_is_routing
+    body = <<~RB
+      def show
+        case @step
+        in :cart then render :cart
+        in :pay then render partial: "portal/pay"
+        in { done: true } then redirect_to orders_path
+        end
+      end
+      def other
+        case @step
+        when :cart then render "portal/cart"
+        else redirect_to root_path
+        end
+      end
+    RB
+    refute_finding lint(controller(body)), :r11
+    logic = body.sub("in :pay then render partial: \"portal/pay\"", "in :pay then @total = @a + 1")
+    assert_finding lint(controller(logic)), :r11, /PortalController#show branches \(casematch\)/
+  end
+
+  def test_a_literal_table_picking_what_to_render_or_run_is_routing
+    consts = "  VIEWS = { cart: \"portal/cart\", pay: \"portal/pay\" }.freeze\n  HANDLERS = { cart: :show_cart, pay: :show_pay }.freeze\n"
+    body = <<~RB
+      def show = render VIEWS.fetch(@step)
+      def part = render partial: VIEWS[@step], locals: { s: @s }
+      def handle(step) = send(HANDLERS.fetch(step))
+      def local
+        view = VIEWS.fetch(@step)
+        render view
+      end
+      def inline = render({ a: "portal/a", b: "portal/b" }.fetch(@step))
+    RB
+    refute_finding lint(controller(body, consts)), :r11
+  end
+
+  def test_a_template_or_method_name_built_at_run_time_is_a_branch
+    body = <<~RB
+      def a = render "portal_pricing/\#{@step}"
+      def b = render partial: "portal/\#{@step}"
+      def c(step) = render partial: step
+      def d = render template: "portal/" + @step.to_s
+      def e
+        name = "portal/\#{@step}"
+        render name
+      end
+      def f(name) = send(name)
+      def g = public_send(@action)
+      def h(name) = method(name).call
+      def i(kind) = Object.const_get(kind).new
+      def j(kind) = "Steps::\#{kind}".constantize
+      def k(kind) = kind.safe_constantize
+    RB
+    r = lint(controller(body))
+    %w[a b c d e f g h i j k].each { assert_finding r, :r11, /PortalController##{_1} chooses what runs by a name built at run time/ }
+    refute r.scored.any? { _1.check == :r11 }
+  end
+
+  def test_literal_names_and_rendered_objects_stay_fine
+    body = <<~RB
+      def a = render "portal/cart"
+      def b = render partial: "portal/pay", locals: { x: @x }
+      def c = send(:show_cart)
+      def d = method(:show_cart)
+      def e = "Steps::Cart".constantize
+      def f = render @products
+      def g = render Components::Row.new(@row)
+      def h = render :show
+      def i = Object.const_get(:Cart)
+      def j = render "elements/notice", action: @t[:undo], layout: @l
+      def k = Rails.configuration.x.payment_gateway.constantize
+      def l = Rails.application.config.x.gateway.safe_constantize
+      def m = ENV.fetch("GATEWAY").constantize
+    RB
+    refute_finding lint(controller(body)), :r11
+  end
+
+  def test_a_template_case_whose_arms_only_render_is_routing
+    layers = [{ name: :application, paths: [%r{\Aapp/views/pages/}] }, { name: :domain, paths: [%r{\Adomain/}] }]
+    routing = "<% case @step -%>\n<% when :lines -%>\n  <%= render \"portal/lines\" %>\n<% when :review -%>\n  <%= render \"portal/review\" %>\n<% end -%>\n"
+    logic = "<% case @step -%>\n<% when :lines -%>\n  <%= @total %>\n<% when :review -%>\n  <%= render \"portal/review\" %>\n<% end -%>\n"
+    refute_finding lint({ "app/views/pages/routed.html.erb" => routing }, layers: layers), :r11, /branches/
+    assert_finding lint({ "app/views/pages/mixed.html.erb" => logic }, layers: layers), :r11, /mixed branches/
+  end
+
+  def test_run_time_names_in_a_composition_template_but_not_below
+    layers = [{ name: :application, paths: [%r{\Aapp/views/pages/}] }, { name: :domain, paths: [%r{\Aapp/views/components/}, %r{\Adomain/}] }]
+    tpl = "<%= render \"portal_pricing/\#{step}\" %>\n<%= render \"portal_pricing/cart\" %>\n"
+    r = lint({ "app/views/pages/show.html.erb" => tpl, "app/views/components/_row.html.erb" => tpl, "domain/lines.rb" => "class Lines; def go(n) = send(n); end\n" }, layers: layers)
+    assert_finding r, :r11, /app\/views\/pages\/show chooses what runs by a name built at run time/
+    assert_equal 1, findings(r, :r11).count { _1.message.include?("name built at run time") }
+    refute_finding r, :r11, /components|Lines/
   end
 end
 
@@ -240,6 +359,78 @@ class PlainWiringTest < Minitest::Test
     assert_finding report, :r11, /go passes @items.lookup straight into load/
   end
 
+  CALLED = PLAIN.merge(
+    "app/shop.rb" => <<~RB,
+      module Screens
+        class Shop
+          include ProgrammingParadigms::Wiring
+          def parts = { lines: @lines }
+          def initialize = (@lines, @items, @totals, @flow = Domain::Lines.new, Domain::Items.new, Domain::Totals.new, Domain::Flow.new)
+          def contents(c) = run(:totals, @totals.contents(c))
+          def go
+            @lines.load(@items.lookup)
+            @totals.contents(@items.lookup)
+            @flow.check(@items.lookup)
+            found = @items.lookup
+            @flow.review(found)
+            ready = @flow.ready?(found)
+            run(:lines, @lines.bump(found)) if ready
+          end
+        end
+      end
+    RB
+    "domain/flow.rb" => "module Domain; class Flow; def check(l) = nil; def review(l) = nil; def ready?(l) = true; end; end\n"
+  ).freeze
+
+  def test_by_default_hand_offs_into_wired_and_called_parts_are_both_handled_data
+    report = lint(CALLED)
+    assert_finding report, :r11, /Shop#go passes @items.lookup straight into load/
+    assert_finding report, :r11, /Shop#go passes @items.lookup straight into contents/
+    assert_finding report, :r11, /Shop#go passes @items.lookup straight into check/
+    assert_finding report, :r11, /Shop#go hands found .* to review/
+    assert_finding report, :r11, /Shop#go hands found .* to ready\?/
+    assert_finding report, :r11, /Shop#go branches \(if\)/
+  end
+
+  def test_wired_only_leaves_out_hand_offs_into_a_called_part
+    report = lint(CALLED, config: { checks: { r11: { calls: :wired_only } } })
+    assert_finding report, :r11, /Shop#go passes @items.lookup straight into load/
+    assert_finding report, :r11, /Shop#go passes @items.lookup straight into contents/
+    refute_finding report, :r11, /straight into check|to review|to ready\?/
+    assert_finding report, :r11, /Shop#go branches \(if\)/
+  end
+
+  def test_wired_only_from_the_cli_and_a_bad_value_fails
+    Dir.mktmpdir do |dir|
+      CALLED.each { |path, src| FileUtils.mkdir_p(File.dirname(File.join(dir, path))); File.write(File.join(dir, path), src) }
+      File.write(File.join(dir, ".ala_lint.rb"), "{ layers: #{LintHelper::LAYERS.inspect}, paths: %w[app domain paradigms] }")
+      out = StringIO.new
+      AlaLint::CLI.run(["--root", dir, "--set", "r11.calls=wired_only"], out: out)
+      assert_includes out.string, "straight into contents"
+      refute_includes out.string, "straight into check"
+      err = StringIO.new
+      assert_equal 2, AlaLint::CLI.run(["--root", dir, "--set", "r11.calls=some"], out: StringIO.new, err: err)
+      assert_includes err.string, "r11.calls must be one of all, wired_only"
+    end
+    assert_raises(ArgumentError) { lint(CALLED, config: { checks: { r11: { calls: :wired } } }) }
+  end
+
+  def test_alternated_and_wildcard_wires_are_still_a_wiring_table
+    screen = PLAIN.fetch("app/screen.rb")
+      .sub("in [ :lines, :rows ] then @rows = payload\n", "in [ :lines, :rows ] | [ :totals, :rows ] then @rows = payload\n")
+      .sub("in [ :totals, :summary ] then @summary = payload\n", "in [ :totals, _ ] then @summary = payload\n")
+    refute_equal PLAIN.fetch("app/screen.rb"), screen
+    report = lint(PLAIN.merge("app/screen.rb" => screen))
+    refute_finding report, :r4, /assigns/
+    refute_finding report, :r11, /branches|passes|hands/
+  end
+
+  def test_an_alternation_that_binds_or_matches_values_is_not_a_wire
+    screen = PLAIN.fetch("app/screen.rb").sub("in [ :totals, :summary ] then @summary = payload\n",
+                                                 "in [ :totals, :summary ] | [ :totals, 1 ] then @summary = payload\n")
+    assert_finding lint(PLAIN.merge("app/screen.rb" => screen)), :r11, /branches/
+  end
+
   def test_a_case_in_any_other_method_is_still_a_branch
     files = PLAIN.merge("app/other.rb" => "module Screens; class Other; def pick(x) = (case [ x, :a ] in [ 1, :a ] then 1 in [ 2, :a ] then 2 end); end; end\n")
     report = lint(files)
@@ -276,9 +467,10 @@ class PlainFeatureTest < Minitest::Test
   end
 
   def test_a_message_the_paradigm_declares_is_not_counted_on_the_public_surface
-    methods = (1..12).map { "def m#{_1} = nil" }.join("\n")
+    methods = (1..10).map { "def m#{_1}(x) = x.go" }.join("\n")
     files = { "domain/wide.rb" => "module Domain; class Wide\n#{methods}\ndef parts = {}\nend; end\n" }
-    assert_finding lint(files, super_strict: true), :public_surface, /Wide exposes 13 public methods/
+    files.merge!((1..4).to_h { ["domain/n#{_1}.rb", "class N#{_1}; def go(x) = x.go; end\n"] })
+    assert_finding lint(files, super_strict: true), :public_surface, /Wide exposes 11 public ports/
     declared = files.merge("paradigms/wiring.rb" => "module Wiring\n  def parts = {}\n\n  private\n\n  def run(part) = part\nend\n")
     refute_finding lint(declared, super_strict: true), :public_surface, /Wide/
   end

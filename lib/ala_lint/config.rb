@@ -46,7 +46,8 @@ module AlaLint
         enforce: @enforce, disabled: Checks::ALL.map(&:name).select { off?(_1) },
         downgraded: Checks::ALL.select { _1.tier == :required && level(_1.name) == :advisory }.map(&:name),
         layers: layered? ? @layers.map { _1[:name] }.join(" > ") : "(none)",
-        thresholds: Checks::ALL.flat_map { |c| c.thresholds.keys.map { |k| ["#{c.name}.#{k}", threshold(c.name, k)] } }.to_h,
+        # a reading (r11.calls) is echoed only when chosen, so a default run's output is unchanged
+        thresholds: Checks::ALL.flat_map { |c| c.thresholds.filter_map { |k, d| ["#{c.name}.#{k}", threshold(c.name, k)] unless Checks::CHOICES.key?("#{c.name}.#{k}") && threshold(c.name, k) == d } }.to_h,
         identity_models: @identity_models, min_score: @min_score
       }
     end
@@ -69,7 +70,7 @@ module AlaLint
         level = :scored if @enforce.include?(c.name)
         level = :off if @disable.include?(c.name)
         cli_set.each { |k, v| thresholds[k.split(".").last.to_sym] = v if k.start_with?("#{c.name}.") }
-        [c.name, thresholds.merge(level: level)]
+        [c.name, thresholds.merge(level: level).to_h { |k, v| [k, choice(c.name, k, v)] }]
       end
     end
 
@@ -80,6 +81,12 @@ module AlaLint
       when :aspirational then @tier == :super_strict ? :scored : :advisory
       else :advisory
       end
+    end
+
+    def choice(check, key, value)
+      allowed = Checks::CHOICES["#{check}.#{key}"] or return value
+      raise ArgumentError, "#{check}.#{key} must be one of #{allowed.join(', ')}, got #{value.inspect}" unless allowed.include?(value.to_s.to_sym)
+      value.to_sym
     end
 
     def normalize_level(value)

@@ -15,7 +15,7 @@ module AlaLint
         --config FILE        a settings file other than ROOT/.ala_lint.rb
         --min-score N        exit 1 if the score is below N (the CI gate)
         --strict             score the obtainable advisory checks too
-        --super-strict       --strict, plus the aspirational checks (R11, public_surface)
+        --super-strict       --strict, plus the aspirational check (R11)
         --require-layers     exit 1 if any unit matches no layer
         --limit N            show up to N findings per list (default 40)
         --format text|json   output format (default text)
@@ -35,9 +35,11 @@ module AlaLint
       Per-check overrides:
         --enforce CHECK      promote one check to scored (repeatable)
         --disable CHECK      turn one check off (repeatable; the report says so)
-        --set KEY=VALUE      retune a threshold: height.max, module_size.max, public_surface.max,
-                             app_share.max, module_avg.min_avg, clone.min_nodes,
-                             clone.min_similarity (repeatable)
+        --set KEY=VALUE      retune a threshold: height.max, module_size.max, public_surface.floor,
+                             public_surface.k, app_share.max, module_avg.min_avg, clone.min_nodes,
+                             clone.min_similarity; or pick a reading: r11.calls=wired_only leaves out
+                             R11's hand-offs into a part the composition calls and never wires
+                             (repeatable)
     TXT
 
     def self.run(argv, out: $stdout, err: $stderr)
@@ -55,7 +57,7 @@ module AlaLint
         o.on("--list-accepted") { opts[:list_accepted] = true }
         o.on("--enforce CHECK") { opts[:enforce] << _1 }
         o.on("--disable CHECK") { opts[:disable] << _1 }
-        o.on("--set KV") { k, v = _1.split("=", 2); opts[:set][k] = v.include?(".") ? v.to_f : v.to_i }
+        o.on("--set KV") { k, v = _1.split("=", 2); opts[:set][k] = !v.to_s.match?(/\A-?\d/) ? v : v.include?(".") ? v.to_f : v.to_i }
         o.on("-h", "--help") { opts[:help] = true }
       end
       begin

@@ -72,15 +72,89 @@ class MinimalityTest < Minitest::Test
     refute_finding r, :passthrough, /ok\?|more/
   end
 
-  def test_module_size_public_surface_and_average
+  def test_module_size
     big = "class Big\n" + (1..13).map { "  def m#{_1}; end\n" }.join + "end\n"
-    r = lint("domain/big.rb" => big, "domain/small.rb" => "class Small; def x; end; end\n")
-    assert_finding r, :public_surface, /Big exposes 13 public methods \(max 12\)/
-    refute r.scored.any? { _1.check == :public_surface }
-    assert lint({ "domain/big.rb" => big }, tier: :super_strict).scored.any? { _1.check == :public_surface }
-    refute lint({ "domain/big.rb" => big }, tier: :strict).scored.any? { _1.check == :public_surface }
     r = lint("domain/big.rb" => big, set: { "module_size.max" => 10 })
     assert_finding r, :module_size, /Big is 15 lines, over 10/
+  end
+end
+
+class PublicSurfaceTest < Minitest::Test
+  include LintHelper
+
+  def klass(name, ports, extra = "") = "class #{name}\n" + (1..ports).map { "  def m#{_1}(x) = x.go\n" }.join + extra + "end\n"
+  def peers(counts) = counts.each_with_index.to_h { |n, i| ["domain/p#{i}.rb", klass("P#{i}", n)] }
+
+  def test_an_outlier_among_its_layer_is_reported_at_every_tier_and_never_scored
+    files = peers([2, 2, 3, 3, 3, 4]).merge("domain/big.rb" => klass("Big", 14))
+    %i[default strict super_strict].each do |tier|
+      r = lint(files, tier: tier)
+      assert_finding r, :public_surface, /Big exposes 14 public ports, above 10 \(the domain layer's Q3 3\.5 \+ 1\.5 × IQR 1\.0 = 5\.0; floor 10\)/
+      refute r.scored.any? { _1.check == :public_surface }, "public_surface scored at #{tier}"
+    end
+    refute_finding lint(files), :public_surface, /P\d/
+    assert lint(files, enforce: ["public_surface"]).scored.any? { _1.check == :public_surface }
+  end
+
+  def test_a_wide_module_among_wide_peers_is_not_an_outlier
+    refute_finding lint(peers([11, 12, 12, 13, 13])), :public_surface
+  end
+
+  def test_each_layer_is_its_own_distribution
+    files = peers([2, 2, 3, 3]).merge("domain/big.rb" => klass("Big", 13))
+    files.merge!((0..3).to_h { ["foundation/f#{_1}.rb", klass("F#{_1}", 13 + _1)] })
+    r = lint(files)
+    assert_finding r, :public_surface, /Big exposes 13/
+    refute_finding r, :public_surface, /F\d/
+  end
+
+  def test_the_floor_keeps_a_small_app_quiet_and_is_configurable
+    files = peers([1, 1, 1, 1]).merge("domain/five.rb" => klass("Five", 5))
+    refute_finding lint(files), :public_surface
+    assert_finding lint(files, set: { "public_surface.floor" => 4 }), :public_surface, /Five exposes 5 public ports, above 4/
+  end
+
+  def test_a_calibration_module_is_a_table_not_ports
+    calibration = <<~RB
+      class Catalog
+        RATES = { standard: 500, express: 1500 }.freeze
+        NAMES = %w[a b].freeze
+        def rate(kind) = RATES.fetch(kind)
+        def rate_or_zero(kind) = RATES.fetch(kind, 0)
+        def name_of(i) = NAMES[i]
+        def names = NAMES
+        def currency = "USD"
+        def limits = { undo: 5, lines: 20 }.freeze
+        def free_over = 5000
+        def tiers = [ 1, 2, 3 ]
+        def gift = nil
+        def page_size = Foundation::Paging::SIZE
+        def texts = { title: "Cart", empty: "Nothing here" }
+        def code(kind) = { a: "A1", b: "B2" }[kind]
+        def on? = true
+        def rates = RATES
+      end
+    RB
+    files = peers([1, 1, 1, 1]).merge("domain/catalog.rb" => calibration)
+    refute_finding lint(files, set: { "public_surface.floor" => 2 }), :public_surface, /Catalog/
+    computing = calibration.sub("def on? = true", "def on?(x) = x > 1")
+    assert_finding lint(peers([1, 1, 1, 1]).merge("domain/catalog.rb" => computing), set: { "public_surface.floor" => 2 }), :public_surface, /Catalog exposes 14 public ports/
+  end
+
+  def test_a_shape_dispatch_counts_one_port_per_pattern
+    dispatch = <<~RB
+      def set_product(lines, change)
+        case change
+        in { stock: } then lines.stock(stock)
+        in { amount: } then lines.price(amount)
+        in { name: String => n } then lines.rename(n)
+        end
+      end
+    RB
+    files = peers([1, 1, 1, 1]).merge("domain/lines.rb" => klass("Lines", 2, dispatch))
+    assert_finding lint(files, set: { "public_surface.floor" => 4 }), :public_surface, /Lines exposes 5 public ports/
+    plain = klass("Lines", 2, "  def set_product(lines, change) = lines.set(change)\n")
+    refute_finding lint(peers([1, 1, 1, 1]).merge("domain/lines.rb" => plain), set: { "public_surface.floor" => 4 }), :public_surface
   end
 end
 
@@ -124,5 +198,41 @@ class PortsTest < Minitest::Test
     assert_finding r, :ports, /Wish declares ports its header comment doesn't list \(removed, add\)/
     assert_finding r, :ports_unwired, /Wish output :removed is named by no composition/
     refute_finding r, :ports_unwired, /:added/
+  end
+
+  def live(feed_header) = <<~RUBY
+    # Outside change as a paradigm.
+    module Live
+      def self.read(fact) = fact
+
+      # Config: topic. In: push.
+      class Publish
+        input(:push, DataFlow) { }
+      end
+
+      #{feed_header}
+      class Feed
+        input(:receive, DataFlow) { }
+        output :changed, DataFlow
+      end
+    end
+  RUBY
+
+  def test_nested_class_ports_are_documented_by_the_nested_class_header
+    r = lint("paradigms/live.rb" => live("# In: receive. Out: changed."), "paradigms/data_flow.rb" => "module DataFlow; end\n")
+    refute_finding r, :ports
+  end
+
+  def test_a_nested_class_missing_its_ports_is_blamed_at_its_own_line
+    r = lint("paradigms/live.rb" => live("# The page's subscription."), "paradigms/data_flow.rb" => "module DataFlow; end\n")
+    assert_equal [["Live::Feed declares ports its header comment doesn't list (changed, receive)", 11]],
+                 findings(r, :ports).map { [_1.message.split(": a reader").first, _1.line] }
+  end
+
+  def test_a_module_is_still_blamed_for_ports_it_declares_itself
+    src = "# Outside change.\nmodule Live\n  input(:tick, DataFlow) { }\n\n  # In: push.\n  class Publish\n    input(:push, DataFlow) { }\n  end\nend\n"
+    r = lint("paradigms/live.rb" => src, "paradigms/data_flow.rb" => "module DataFlow; end\n")
+    assert_equal [["Live declares ports its header comment doesn't list (tick)", 2]],
+                 findings(r, :ports).map { [_1.message.split(": a reader").first, _1.line] }
   end
 end

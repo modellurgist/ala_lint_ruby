@@ -1,7 +1,7 @@
 module AlaLint
   module Rules
-    # R7's advisories: dead private methods, pass-throughs, unit size, the average size, and the
-    # public surface a little ball of mud is allowed before it has leaked.
+    # R7's advisories: dead private methods, pass-throughs, unit size, the average size, and a public
+    # surface wide for its layer, reported as a prompt for R6/R7 judgement.
     class Minimality < Base
       def check
         units.each do |u|
@@ -9,8 +9,8 @@ module AlaLint
           dead_privates(u)
           passthroughs(u)
           size(u)
-          surface(u)
         end
+        surfaces
         average
       end
 
@@ -63,13 +63,51 @@ module AlaLint
         flag(:module_size, u, u.line, "#{u.name} is #{u.loc} lines, over #{max}: too big to read alone (R7, Summary)") if u.loc > max
       end
 
-      def surface(u)
-        return if composition?(u) || u.script? || model.framework_subclass?(u)
-        public = u.public_methods_list.reject { _1.name == :initialize || model.paradigm_messages.include?(_1.name) }.map(&:name).uniq
-        max = config.threshold(:public_surface, :max)
-        return unless public.size > max
-        flag(:public_surface, u, u.line, "#{u.name} exposes #{public.size} public methods (max #{max}): a wide main interface means the little ball of mud has leaked past its boundary (R7, R9 §2.3.4)")
+      # Reported against the unit's own layer: Tukey's outer fence over the port counts of the layer's
+      # units that have any, so "wide" means wide for this app, and a floor keeps a small app quiet.
+      def surfaces
+        counted = units.reject { _1.template? || _1.script? || composition?(_1) || model.framework_subclass?(_1) || calibration?(_1) }
+                       .map { [_1, ports(_1)] }.select { _2.positive? }
+        floor = config.threshold(:public_surface, :floor)
+        k = config.threshold(:public_surface, :k)
+        counted.group_by { _1[0].layer }.each do |layer, group|
+          q1, q3 = quartiles(group.map(&:last))
+          fence = q3 + k * (q3 - q1)
+          limit = [floor, fence].max
+          where = layer ? "the #{layer.name} layer's" : "the app's"
+          group.each do |u, n|
+            next unless n > limit
+            flag(:public_surface, u, u.line, "#{u.name} exposes #{n} public ports, above #{number(limit)} (#{where} Q3 #{number(q3, 1)} + #{number(k, 1)} × IQR #{number(q3 - q1, 1)} = #{number(fence, 1)}; floor #{number(floor)}): " \
+                                            "wide for this app; is it one learnable concept (R6), or a little ball of mud that leaked past its boundary (R7, §2.3.4)?")
+          end
+        end
       end
+
+      # One per public method, except a method whose body only dispatches on the shape of a parameter
+      # (`case change in { stock: } ... in { amount: }`), which is one port per pattern.
+      def ports(u)
+        public = u.public_methods_list.reject { _1.name == :initialize || model.paradigm_messages.include?(_1.name) }.uniq(&:name)
+        public.sum do |m|
+          body = m.simple_body
+          dispatch = body.is_a?(Prism::CaseMatchNode) && body.predicate.is_a?(Prism::LocalVariableReadNode) && m.params.include?(body.predicate.name)
+          dispatch ? body.conditions.size : 1
+        end
+      end
+
+      # A table of the store's values rather than an abstraction with ports: every public method only
+      # returns a literal, a constant, or a value picked from a literal table by its key argument.
+      def calibration?(u)
+        public = u.public_methods_list.reject { _1.name == :initialize }
+        !public.empty? && public.all? { literal_value?(_1.simple_body) || literal_pick?(_1.simple_body) }
+      end
+
+      def quartiles(values)
+        sorted = values.sort
+        at = ->(q) { pos = q * (sorted.size - 1); lo = sorted[pos.floor]; lo + (sorted[pos.ceil] - lo) * (pos - pos.floor) }
+        [at.(0.25), at.(0.75)]
+      end
+
+      def number(x, digits = nil) = digits ? format("%.#{digits}f", x) : (x == x.to_i ? x.to_i.to_s : format("%.1f", x))
 
       def average
         sized = model.ruby_units.reject(&:script?)
