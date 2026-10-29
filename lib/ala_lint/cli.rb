@@ -16,10 +16,15 @@ module AlaLint
         --min-score N        exit 1 if the score is below N (the CI gate)
         --strict             score the obtainable advisory checks too
         --super-strict       --strict, plus the aspirational check (R11)
+        --preset NAME        a reading of the checklist: light_ala turns off the port, wiring and
+                             composition-only checks (R9, R10, R11, ports); settings for a check
+                             still win
         --require-layers     exit 1 if any unit matches no layer
         --limit N            show up to N findings per list (default 40)
         --format text|json   output format (default text)
         --list-checks        print every check with its tier and threshold, then exit
+        --explain            print what this run's settings score, only report, and leave to a
+                             reader (rule by rule, with § citations), then exit without reading code
         --list-accepted      print every INHERENT_ declaration and every `ala:accept` comment, what
                              it covers, and the stale ones, then exit
         --help, -h           show this help
@@ -50,11 +55,13 @@ module AlaLint
         o.on("--min-score N", Integer) { opts[:min_score] = _1 }
         o.on("--strict") { opts[:tier] = :strict }
         o.on("--super-strict") { opts[:tier] = :super_strict }
+        o.on("--preset NAME") { opts[:preset] = _1 }
         o.on("--require-layers") { opts[:require_layers] = true }
         o.on("--limit N", Integer) { opts[:limit] = _1 }
         o.on("--format F") { opts[:format] = _1.to_sym }
         o.on("--list-checks") { opts[:list] = true }
         o.on("--list-accepted") { opts[:list_accepted] = true }
+        o.on("--explain") { opts[:explain] = true }
         o.on("--enforce CHECK") { opts[:enforce] << _1 }
         o.on("--disable CHECK") { opts[:disable] << _1 }
         o.on("--set KV") { k, v = _1.split("=", 2); opts[:set][k] = !v.to_s.match?(/\A-?\d/) ? v : v.include?(".") ? v.to_f : v.to_i }
@@ -73,6 +80,7 @@ module AlaLint
       opts[:set].each_key { |k| Checks.fetch(k.split(".").first) }
 
       root = File.expand_path(opts[:root] || ".")
+      return (out.puts(Explain.text(Config.load(root, opts.except(:root, :list, :list_accepted, :help, :explain)))); 0) if opts[:explain]
       report = AlaLint.analyze(root, **opts.except(:root, :list, :list_accepted, :help))
       return (out.puts(report.accepted_listing); 0) if opts[:list_accepted]
       out.puts(report.model.config.format == :json ? report.to_json : report.to_text)

@@ -7,7 +7,7 @@ module AlaLint
     DEFAULT_EXCLUDE = [%r{/assets/}, %r{/javascript/}, %r{/views/pwa/}, %r{/channels/application_cable/}].freeze
 
     attr_reader :root, :paths, :layers, :exclude, :min_score, :identity_models, :require_layers,
-                :tier, :enforce, :disable, :limit, :format, :raw
+                :tier, :preset, :enforce, :disable, :limit, :format, :raw
 
     def self.load(root, argv_opts = {})
       file = argv_opts[:config] || File.join(root, ".ala_lint.rb")
@@ -30,6 +30,8 @@ module AlaLint
       @disable = Array(opts[:disable]).map(&:to_sym)
       @limit = opts[:limit] || 40
       @format = opts[:format] || :text
+      @preset = (opts[:preset] || raw[:preset])&.to_sym
+      Checks.preset(@preset) if @preset
       @checks = build_checks(raw[:checks] || {}, opts[:set] || {})
     end
 
@@ -49,7 +51,7 @@ module AlaLint
         # a reading (r11.calls) is echoed only when chosen, so a default run's output is unchanged
         thresholds: Checks::ALL.flat_map { |c| c.thresholds.filter_map { |k, d| ["#{c.name}.#{k}", threshold(c.name, k)] unless Checks::CHOICES.key?("#{c.name}.#{k}") && threshold(c.name, k) == d } }.to_h,
         identity_models: @identity_models, min_score: @min_score
-      }
+      }.merge(@preset ? { preset: @preset } : {}).merge(@conflicts.empty? ? {} : { conflicts: @conflicts })
     end
 
     def relative(path) = path.start_with?(@root) ? path.delete_prefix(@root).delete_prefix("/") : path
@@ -57,21 +59,39 @@ module AlaLint
     private
 
     def build_checks(file_checks, cli_set)
-      Checks::ALL.to_h do |c|
+      @conflicts = []
+      checks = Checks::ALL.to_h do |c|
         setting = file_checks[c.name] || file_checks[c.name.to_s]
-        level = tier_level(c)
+        asked = level_sources(c.name, setting)
+        @conflicts << conflict(c.name, asked) if asked.map(&:last).uniq.size > 1
         thresholds = c.thresholds.dup
-        case setting
-        when Symbol, String then level = normalize_level(setting)
-        when Hash
-          level = normalize_level(setting[:level]) if setting[:level]
-          thresholds.merge!(setting.slice(*thresholds.keys))
-        end
-        level = :scored if @enforce.include?(c.name)
-        level = :off if @disable.include?(c.name)
+        thresholds.merge!(setting.slice(*thresholds.keys)) if setting.is_a?(Hash)
         cli_set.each { |k, v| thresholds[k.split(".").last.to_sym] = v if k.start_with?("#{c.name}.") }
+        level = asked.empty? ? tier_level(c) : asked.last.last
         [c.name, thresholds.merge(level: level).to_h { |k, v| [k, choice(c.name, k, v)] }]
       end
+      @conflicts.sort_by! { _1[:check].to_s }
+      checks
+    end
+
+    # The level each source asked for, in precedence order, so the last one is the level used and the
+    # report can name the ones it overrode.
+    def level_sources(check, setting)
+      file_level = case setting
+                   when Symbol, String then setting
+                   when Hash then setting[:level]
+                   end
+      [
+        (["preset #{@preset}", :off] if @preset && !Checks.preset(@preset).include?(check)),
+        (["file checks", normalize_level(file_level)] if file_level),
+        (["--enforce", :scored] if @enforce.include?(check)),
+        (["--disable", :off] if @disable.include?(check))
+      ].compact
+    end
+
+    def conflict(check, asked)
+      { check: check, sources: asked.map { |source, level| { source: source, level: level } },
+        winner: asked.last.first, level: asked.last.last }
     end
 
     def tier_level(check)

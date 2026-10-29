@@ -41,7 +41,9 @@ module AlaLint
         checks = Checks::ALL.select { _1.rule == r }.map(&:name)
         s = @scored.count { checks.include?(_1.check) }
         a = @advisory.count { checks.include?(_1.check) }
-        state = if r == :r8 || (Checks::NEEDS_LAYERS.include?(r) && !model.layered?) then :unchecked
+        state = if r == :r8 then :unchecked
+                elsif checks.all? { @config.off?(_1) } then :not_adopted
+                elsif Checks::NEEDS_LAYERS.include?(r) && !model.layered? then :unchecked
                 elsif s.positive? then :not_met
                 else :met
                 end
@@ -97,19 +99,21 @@ module AlaLint
     def to_text
       limit = @config.limit
       r = rules
-      checked = r.values.count { _1[:state] != :unchecked }
+      checked = r.values.count { !%i[unchecked not_adopted].include?(_1[:state]) }
+      not_adopted = r.values.count { _1[:state] == :not_adopted }
       met = r.values.count { _1[:state] == :met }
       strictly = r.values.count { _1[:state] == :met && _1[:advisory].zero? }
       out = +""
       out << unassigned_banner
+      out << conflict_banner
       out << "── ALA Checklist (R1–R11), Ruby and Rails edition ────────────────────────\n"
       out << "units: #{model.units.size} (#{model.templates.size} templates)   functions: #{functions}   LOC: #{loc}\n"
       out << "abstraction height: #{height || 'within max'}   layer coverage: #{coverage_line}\n\n"
-      out << "Checklist rules met: #{met} of #{checked} checked (11 in the checklist; R8 is judgement)\n"
+      out << "Checklist rules met: #{met} of #{checked} checked (11 in the checklist; R8 is judgement#{not_adopted.zero? ? '' : "; #{not_adopted} not adopted, every check off"})\n"
       out << "  with no finding at all, advisory included: #{strictly} of #{checked}\n"
       out << "  — a count, not a density: one finding in a large codebase still leaves its rule unmet.\n"
       out << "Accepted by hand: #{@accepted.size} finding(s) under #{acceptances.size} ala:accept comment(s)#{unused_acceptances.empty? ? '' : ", #{unused_acceptances.size} covering nothing"}; --list-accepted prints them\n" unless acceptances.empty?
-      out << "  " << r.map { |k, v| "#{k.to_s.upcase} #{v[:state] == :met ? 'met' : v[:state] == :not_met ? "NOT met (#{v[:scored]})" : 'unchecked'}" }.join("  ") << "\n\n"
+      out << "  " << r.map { |k, v| "#{k.to_s.upcase} #{{ met: 'met', not_met: "NOT met (#{v[:scored]})", not_adopted: 'not adopted' }.fetch(v[:state], 'unchecked')}" }.join("  ") << "\n\n"
       out << "Degree of function compliance: #{score}/100  (grade #{grade})\n"
       out << "  — 100 minus the weighted-violation load per 100 functions; a few dense units can drag it.\n"
       out << "  weighted violations: #{weighted}   load per 100 functions: #{density.round(2)}   per 1000 LOC: #{loc.zero? ? 0 : (weighted * 1000.0 / loc).round(2)}\n\n"
@@ -120,7 +124,7 @@ module AlaLint
         checks = Checks::ALL.select { _1.rule == rule }.map(&:name)
         n = @scored.count { checks.include?(_1.check) }
         w = Checks::ALL.find { _1.rule == rule && _1.tier == :required }&.weight || Checks::ALL.find { _1.rule == rule }.weight
-        out << format("  %-36s %3d  (×%d)\n", name, n, w)
+        out << format("  %-36s %3d  (×%d)%s\n", name, n, w, r[rule][:state] == :not_adopted ? "  not adopted" : "")
       end
       out << "\nFindings (scored, most severe first):\n"
       out << (scored.empty? ? "  none 🎉\n" : lines(scored, limit))
@@ -155,12 +159,19 @@ module AlaLint
       "!! so this score covers less than the codebase:\n" + c[:unassigned].first(10).map { "!!   #{_1}\n" }.join + "\n"
     end
 
+    def conflict_banner
+      list = @config.params[:conflicts] or return ""
+      width = [10, *list.map { _1[:check].size }].max
+      "settings conflict: #{list.size} check#{list.size == 1 ? '' : 's'} set differently by more than one source; the later source won\n" +
+        list.map { |c| "  #{c[:check].to_s.ljust(width)} #{c[:sources].map { "#{_1[:source]}: #{_1[:level]}" }.join('   ')}   -> using #{c[:winner]} (#{c[:level]})\n" }.join + "\n"
+    end
+
     def params_section
       p = @config.params
       integrity = +""
       integrity << "\n  disabled (NOT scored): #{p[:disabled].join(',')}" unless p[:disabled].empty?
       integrity << "\n  downgraded to advisory: #{p[:downgraded].join(',')}" unless p[:downgraded].empty?
-      "\nParameters (effective):\n  root: #{p[:root]}   paths: #{p[:paths].join(' ')}   tier: #{p[:tier]}\n" \
+      "\nParameters (effective):\n  root: #{p[:root]}   paths: #{p[:paths].join(' ')}   tier: #{p[:tier]}#{p[:preset] ? "   preset: #{p[:preset]}" : ''}\n" \
       "  layers: #{p[:layers]}   identity_models: #{p[:identity_models].empty? ? '(none)' : p[:identity_models].join(',')}\n" \
       "  enforce: #{p[:enforce].empty? ? '(none)' : p[:enforce].join(',')}#{integrity}\n" \
       "  thresholds: #{p[:thresholds].map { |k, v| "#{k}=#{v}" }.join(' ')}\n" \

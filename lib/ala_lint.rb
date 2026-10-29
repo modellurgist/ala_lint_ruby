@@ -10,6 +10,7 @@ require_relative "ala_lint/layers"
 require_relative "ala_lint/model"
 require_relative "ala_lint/rules"
 require_relative "ala_lint/report"
+require_relative "ala_lint/explain"
 
 module AlaLint
   VERSION = "0.1.0"

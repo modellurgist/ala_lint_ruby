@@ -49,11 +49,21 @@ module AlaLint
     # part the composition calls and never wires (ALA Light, subset 3).
     CHOICES = { "r11.calls" => %i[all wired_only] }.freeze
 
+    # The checks a reading of the checklist adopts; every other check is off under it, so a check added
+    # later stays off until someone judges it part of the reading. Light ALA keeps layering, dependency
+    # direction, calibration at the top, named rules and clones, and drops ports, wiring and
+    # composition-only pages (R9, R10, R11 and the port checks).
+    PRESETS = {
+      light_ala: %i[r1 r2 r3 r4 r5 r6 layer r7 module_size height passthrough tramp subscribe ui_io clone
+                    public_surface clone_inside module_avg unassigned]
+    }.freeze
+
     BY_NAME = ALL.to_h { [_1.name, _1] }.freeze
     RULES = %i[r1 r2 r3 r4 r5 r6 r7 r8 r9 r10 r11].freeze
     NEEDS_LAYERS = %i[r3 r10 r11].freeze
 
     def self.fetch(name) = BY_NAME.fetch(name.to_sym) { raise ArgumentError, "unknown check #{name}" }
+    def self.preset(name) = PRESETS.fetch(name.to_sym) { raise ArgumentError, "unknown preset #{name} (known: #{PRESETS.keys.join(', ')})" }
 
     def self.listing
       out = +"ALA checks and how each is scored. Change any of this in a `.ala_lint.rb` hash\n" \

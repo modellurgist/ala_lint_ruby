@@ -27,13 +27,22 @@ bin/ala_lint --root app --enforce r7        # promote one check to scored
 bin/ala_lint --root app --disable r3        # turn one off (the report says so)
 bin/ala_lint --root app --set height.max=4  # retune a threshold
 bin/ala_lint --root app --set r11.calls=wired_only  # R11 reads hand-offs into wired parts only
+bin/ala_lint --root app --preset light_ala  # light ALA: the port, wiring and composition checks off
 bin/ala_lint --root app --format json
 bin/ala_lint --list-checks                  # every check, its tier and threshold
+bin/ala_lint --root app --explain --strict  # what this run scores, only reports, and leaves to a reader
 bin/ala_lint --help                         # unknown flags fail with the usage, never silently
 rake test                                   # the linter's own suite (Minitest)
 ```
 
 Ruby 4.0 (Prism ships with it); `.tool-versions` pins 4.0.7 for asdf.
+
+`--explain` prints a guide to the run that its flags and `.ala_lint.rb` describe, and reads no
+code. It has three parts: the checklist rules the run scores, each with its § citation and the
+checks that score it; the rules and checks it only reports; and what still applies that no check
+reads. That last part always has R8, has the judgement half of each other rule the run adopts, and
+under `--preset light_ala` has V59's conventions, rules 11 and 12 included, since this linter has no
+check for them. A rule whose checks are all off is left out, and the last line names it.
 
 ## Settings (`.ala_lint.rb`)
 
@@ -75,6 +84,30 @@ R11 takes one setting that is a reading, not a number: `calls:` is `:all` (the d
 `--set r11.calls=wired_only`. Any other value fails the run. `:wired_only` is for a composition that
 wires only the parts two or more compositions place and calls the rest (ALA Light, subset 3): a
 call-and-return there is the design, not handled data.
+
+A **preset** is a reading of the checklist, set by `preset: :light_ala` in the file or
+`--preset light_ala` for one run (the flag wins; an unknown name fails the run). Light ALA keeps
+layering, dependency direction, calibration at the top, named rules and the clone check, and drops
+ports, wiring and composition-only pages. The preset is a whitelist of the checks it adopts, so a
+check added to the linter later is off under it until someone judges it part of the reading; today
+that leaves off r9, r10, r10_aggregate, r11, r11_share, app_share, ports and ports_unwired. r9 goes
+whole, its `ENV`/`Rails.configuration` lookups below the composition included. A level set for a check in
+`checks:`, `--enforce` or `--disable` still wins over the preset; a hash with thresholds only (a
+`calls:`) leaves the preset's `:off`. The parameter echo names the preset. The Elixir edition's
+light-ALA checks for builder literals and stale-session writes have no Ruby counterpart yet.
+
+A check's level comes from the last source that sets one, in this order: the preset, the `checks:`
+level in `.ala_lint.rb`, `--enforce`, `--disable`. When two of them ask for different levels, the
+report opens with a block that names each source, the level it asked for and the one used, and
+`params.conflicts` in `--format json` holds the same list. Sources that agree, and a hash with
+thresholds only, are not a conflict, and a run without one prints what it printed before. V08 and
+V09 set an R11 level, so under `--preset light_ala` they show the second line below.
+
+```
+settings conflict: 2 checks set differently by more than one source; the later source won
+  clone      file checks: off   --enforce: scored   -> using --enforce (scored)
+  r11        preset light_ala: off   file checks: advisory   -> using file checks (advisory)
+```
 
 ## Accepting a finding by hand (`ala:accept`)
 
@@ -171,6 +204,10 @@ The score is the Elixir linter's: 100 minus weighted findings per 100 functions 
 R4 ×2, the rest ×1), with a second count of functions carrying no scored finding, and the rules-met
 count, because a density lets one finding in a large codebase round away. Functions are methods plus
 one per template.
+
+A rule whose checks are all off (by `checks:`, `--disable` or a preset) is **not adopted**: the
+report says so in the rules line and the JSON (`"state": "not_adopted"`), and leaves it out of the
+rules-met count rather than calling it met. One check of a rule still on keeps the rule checked.
 
 ## Layout
 

@@ -270,6 +270,149 @@ class ConfigAndReportTest < Minitest::Test
   end
 end
 
+class LightAlaPresetTest < Minitest::Test
+  include LintHelper
+
+  OFF = %i[r9 r10 r10_aggregate r11 r11_share app_share ports ports_unwired].freeze
+  FILES = ConfigAndReportTest::FILES
+
+  def config(raw = {}, **opts) = AlaLint::Config.new(Dir.tmpdir, raw, opts)
+
+  def test_light_ala_turns_off_the_port_wiring_and_composition_checks
+    c = config({ preset: :light_ala })
+    OFF.each { assert_equal :off, c.level(_1), "#{_1} under light_ala" }
+    %i[r1 r2 r3 r4 r5 r6 layer].each { assert_equal :scored, c.level(_1) }
+    %i[r7 clone height subscribe ui_io].each { assert_equal :advisory, c.level(_1) }
+    assert_equal :scored, config({ preset: :light_ala }, tier: :strict).level(:clone)
+    assert_equal :scored, config({ preset: "light_ala" }, tier: :super_strict).level(:r7)
+    assert_equal :off, config({ preset: :light_ala }, tier: :super_strict).level(:r11)
+  end
+
+  def test_the_preset_is_a_whitelist_so_a_check_it_does_not_name_is_off
+    assert_equal OFF.sort, (AlaLint::Checks::ALL.map(&:name) - AlaLint::Checks.preset(:light_ala)).sort
+    real = AlaLint::Checks::ALL
+    dummy = AlaLint::Checks::Check.new(:later_check, :r1, :required, 1, "a check added after the preset", {})
+    AlaLint::Checks.send(:remove_const, :ALL)
+    AlaLint::Checks.const_set(:ALL, real + [dummy])
+    assert_equal :off, config({ preset: :light_ala }).level(:later_check)
+    assert_equal :scored, config.level(:later_check)
+  ensure
+    AlaLint::Checks.send(:remove_const, :ALL)
+    AlaLint::Checks.const_set(:ALL, real)
+  end
+
+  def test_explicit_settings_override_the_preset
+    assert_equal :advisory, config({ preset: :light_ala, checks: { r11: :advisory } }).level(:r11)
+    assert_equal :scored, config({ preset: :light_ala, checks: { r10: { level: :scored } } }).level(:r10)
+    c = config({ preset: :light_ala, checks: { r11: { calls: :wired_only } } })
+    assert_equal :off, c.level(:r11)
+    assert_equal :wired_only, c.threshold(:r11, :calls)
+    assert_equal :scored, config({ preset: :light_ala }, enforce: [:r9]).level(:r9)
+    assert_equal :off, config({ preset: :light_ala }, disable: [:r1]).level(:r1)
+    c = config({ preset: :light_ala }, enforce: [:r11], set: { "r11.calls" => "wired_only" })
+    assert_equal [:scored, :wired_only], [c.level(:r11), c.threshold(:r11, :calls)]
+    assert_equal :light_ala, config({ preset: :nothing_known }, preset: "light_ala").preset
+  end
+
+  def test_the_preset_from_the_file_and_from_the_cli
+    Dir.mktmpdir do |dir|
+      FileUtils.mkdir_p(File.join(dir, "domain"))
+      File.write(File.join(dir, "domain/a.rb"), FILES.values.first)
+      File.write(File.join(dir, ".ala_lint.rb"), "{ layers: #{LintHelper::LAYERS.inspect}, paths: %w[domain] }")
+      out = StringIO.new
+      assert_equal 0, AlaLint::CLI.run(["--root", dir, "--preset", "light_ala"], out: out)
+      assert_includes out.string, "preset: light_ala"
+      assert_includes out.string, "R9 not adopted  R10 not adopted  R11 not adopted"
+      assert_includes out.string, "Checklist rules met: 6 of 7 checked"
+      out = StringIO.new
+      assert_equal 0, AlaLint::CLI.run(["--root", dir, "--preset", "light_ala", "--format", "json"], out: out)
+      json = JSON.parse(out.string)
+      assert_equal "light_ala", json["params"]["preset"]
+      assert_equal "not_adopted", json["rules"]["r10"]["state"]
+      File.write(File.join(dir, ".ala_lint.rb"), "{ layers: #{LintHelper::LAYERS.inspect}, paths: %w[domain], preset: :light_ala }")
+      out = StringIO.new
+      assert_equal 0, AlaLint::CLI.run(["--root", dir], out: out)
+      assert_includes out.string, "preset: light_ala"
+      assert_includes out.string, "R11 not adopted"
+    end
+  end
+
+  def test_an_unknown_preset_fails
+    Dir.mktmpdir do |dir|
+      FileUtils.mkdir_p(File.join(dir, "domain"))
+      File.write(File.join(dir, "domain/a.rb"), FILES.values.first)
+      err = StringIO.new
+      assert_equal 2, AlaLint::CLI.run(["--root", dir, "--preset", "heavy"], out: StringIO.new, err: err)
+      assert_includes err.string, "unknown preset heavy (known: light_ala)"
+      File.write(File.join(dir, ".ala_lint.rb"), "{ paths: %w[domain], preset: :lite }")
+      err = StringIO.new
+      assert_equal 2, AlaLint::CLI.run(["--root", dir], out: StringIO.new, err: err)
+      assert_includes err.string, "unknown preset lite"
+    end
+  end
+
+  def test_a_rule_whose_checks_are_all_off_is_not_adopted
+    r = lint(FILES, disable: [:r3])
+    assert_equal :not_adopted, r.rules[:r3][:state]
+    assert_includes r.to_text, "R3 not adopted"
+    assert_includes r.to_text, "Checklist rules met: 9 of 9 checked"
+    assert_includes r.to_text, "; 1 not adopted, every check off)"
+    assert_equal "not_adopted", JSON.parse(r.to_json)["rules"]["r3"]["state"]
+    assert_equal :met, lint(FILES, disable: [:r7]).rules[:r7][:state]
+    assert_equal :unchecked, lint(FILES, config: { preset: :light_ala }).rules[:r8][:state]
+  end
+
+  def test_a_run_without_a_preset_echoes_none
+    r = lint(FILES)
+    refute JSON.parse(r.to_json)["params"].key?("preset")
+    refute_includes r.to_text, "preset"
+    refute_includes r.to_text, "not adopted"
+  end
+end
+
+class SettingsConflictTest < Minitest::Test
+  include LintHelper
+
+  FILES = ConfigAndReportTest::FILES
+
+  def test_a_file_level_and_enforce_disagree_and_the_block_comes_before_the_scores
+    text = lint(FILES, config: { checks: { clone: :off } }, enforce: [:clone]).to_text
+    assert_includes text, "settings conflict: 1 check set differently by more than one source; the later source won\n" \
+                          "  clone      file checks: off   --enforce: scored   -> using --enforce (scored)\n"
+    assert_operator text.index("settings conflict"), :<, text.index("Degree of function compliance")
+  end
+
+  def test_the_preset_and_a_file_level_disagree
+    text = lint(FILES, config: { preset: :light_ala, checks: { r11: :advisory } }).to_text
+    assert_includes text, "  r11        preset light_ala: off   file checks: advisory   -> using file checks (advisory)\n"
+  end
+
+  def test_three_sources_and_two_conflicts_counted_in_the_heading
+    text = lint(FILES, config: { preset: :light_ala, checks: { r11: :advisory, r7: :scored } }, enforce: [:r11], disable: [:r7]).to_text
+    assert_includes text, "settings conflict: 2 checks set differently by more than one source; the later source won\n"
+    assert_includes text, "  r11        preset light_ala: off   file checks: advisory   --enforce: scored   -> using --enforce (scored)\n"
+    assert_includes text, "  r7         file checks: scored   --disable: off   -> using --disable (off)\n"
+  end
+
+  def test_sources_that_agree_are_not_a_conflict
+    r = lint(FILES, config: { preset: :light_ala, checks: { r7: :scored, r11: :off } }, enforce: [:r7])
+    refute_includes r.to_text, "settings conflict"
+    refute JSON.parse(r.to_json)["params"].key?("conflicts")
+  end
+
+  def test_a_setting_with_thresholds_only_is_not_a_conflict
+    r = lint(FILES, config: { preset: :light_ala, checks: { r11: { calls: :wired_only }, clone: { min_nodes: 20 } } }, enforce: [:clone])
+    refute_includes r.to_text, "settings conflict"
+    refute JSON.parse(r.to_json)["params"].key?("conflicts")
+  end
+
+  def test_the_json_params_carry_the_conflicts
+    json = JSON.parse(lint(FILES, config: { checks: { clone: :off } }, enforce: [:clone]).to_json)
+    assert_equal [{ "check" => "clone", "sources" => [{ "source" => "file checks", "level" => "off" }, { "source" => "--enforce", "level" => "scored" }],
+                    "winner" => "--enforce", "level" => "scored" }], json["params"]["conflicts"]
+  end
+end
+
 class AcceptanceTest < Minitest::Test
   include LintHelper
 
